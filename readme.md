@@ -53,12 +53,23 @@
 
 # Docker
 
+You can create the docker image from `Dockerfile`.
 ```sh
 $ docker build -t pixivutil2 .
 $ docker run -it --rm \
   -v $(pwd):/workdir \
   -w /workdir \
   pixivutil2 \
+  /bin/bash -c "python PixivUtil2.py"
+```
+
+or the image is easily downloaded from [DockerHub](https://hub.docker.com/repository/docker/denden047/pixivutil2)
+```sh
+$ docker pull denden047/pixivutil2
+$ docker run -it --rm \
+  -v $(pwd):/workdir \
+  -w /workdir \
+  denden047/pixivutil2 \
   /bin/bash -c "python PixivUtil2.py"
 ```
 
