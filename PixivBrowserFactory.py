@@ -8,8 +8,9 @@ import re
 import socket
 import sys
 import time
-import urllib
 import traceback
+import urllib
+from typing import Union
 
 import demjson
 import mechanize
@@ -19,8 +20,9 @@ from bs4 import BeautifulSoup
 import PixivHelper
 from PixivArtist import PixivArtist
 from PixivException import PixivException
-from PixivImage import PixivImage
+from PixivImage import PixivImage, PixivMangaSeries
 from PixivModelFanbox import FanboxArtist, FanboxPost
+from PixivModelSketch import SketchArtist, SketchPost
 from PixivOAuth import PixivOAuth
 from PixivTags import PixivTags
 
@@ -32,10 +34,8 @@ _browser = None
 # pylint: disable=E1101
 class PixivBrowser(mechanize.Browser):
     _config = None
-    _isWhitecube = False
-    _whitecubeToken = ""
     _cache = dict()
-    _max_cache = 10000  # keep 1000 item in memory
+    _max_cache = 10000  # keep n-item in memory
     _myId = 0
     _isPremium = False
 
@@ -45,6 +45,7 @@ class PixivBrowser(mechanize.Browser):
     _locale = ""
 
     _is_logged_in_to_FANBOX = False
+    _orig_getaddrinfo = None
 
     __oauth_manager = None
     @property
@@ -53,11 +54,16 @@ class PixivBrowser(mechanize.Browser):
             proxy = None
             if self._config.useProxy:
                 proxy = self._config.proxy
+            if self._config is not None:
+                if self._username is None:
+                    self._username = self._config.username
+                if self._password is None:
+                    self._password = self._config.password
             self.__oauth_manager = PixivOAuth(self._username,
-                                             self._password,
-                                             proxies=proxy,
-                                             refresh_token=self._config.refresh_token,
-                                             validate_ssl=self._config.enableSSLVerification)
+                                              self._password,
+                                              proxies=proxy,
+                                              refresh_token=self._config.refresh_token,
+                                              validate_ssl=self._config.enableSSLVerification)
         return self.__oauth_manager
 
     def _put_to_cache(self, key, item, expiration=3600):
@@ -102,6 +108,12 @@ class PixivBrowser(mechanize.Browser):
         mechanize.Browser.back(self)
         return
 
+    def getaddrinfo(self, *args):
+        try:
+            return self._orig_getaddrinfo(*args)
+        except socket.gaierror:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (args[0], args[1]))]
+
     def _configureBrowser(self, config):
         if config is None:
             PixivHelper.get_logger().info("No config given")
@@ -124,14 +136,9 @@ class PixivBrowser(mechanize.Browser):
                 socket.socket = socks.socksocket
 
                 # https://github.com/Nandaka/PixivUtil2/issues/592#issuecomment-659516296
-                orig_getaddrinfo = socket.getaddrinfo
-
-                def getaddrinfo(*args):
-                    try:
-                        return orig_getaddrinfo(*args)
-                    except socket.gaierror:
-                        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (args[0], args[1]))]
-                socket.getaddrinfo = getaddrinfo
+                if self._orig_getaddrinfo is None:
+                    self._orig_getaddrinfo = socket.getaddrinfo
+                socket.getaddrinfo = self._orig_getaddrinfo
 
             else:
                 self.set_proxies(config.proxy)
@@ -215,7 +222,7 @@ class PixivBrowser(mechanize.Browser):
                     raise PixivException("Failed to get page: {0}, please check your internet connection/firewall/antivirus."
                                          .format(temp), errorCode=PixivException.SERVER_ERROR)
 
-    def getPixivPage(self, url, referer="https://www.pixiv.net", returnParsed=True, enable_cache=True):
+    def getPixivPage(self, url, referer="https://www.pixiv.net", returnParsed=True, enable_cache=True) -> Union[str, BeautifulSoup]:
         ''' get page from pixiv and return as parsed BeautifulSoup object or response object.
 
             throw PixivException as server error
@@ -237,13 +244,10 @@ class PixivBrowser(mechanize.Browser):
                 except urllib.error.HTTPError as ex:
                     if ex.code in [403, 404, 503]:
                         read_page = ex.read()
-                        raise PixivException("Failed to get page: {0} => {1}".format(
-                            url, ex), errorCode=PixivException.SERVER_ERROR)
+                        raise PixivException(f"Failed to get page: {url} => {ex}", errorCode=PixivException.SERVER_ERROR)
                     else:
-                        PixivHelper.print_and_log(
-                            'error', 'Error at getPixivPage(): {0}'.format(str(sys.exc_info())))
-                        raise PixivException("Failed to get page: {0}".format(
-                            url), errorCode=PixivException.SERVER_ERROR)
+                        PixivHelper.print_and_log('error', f'Error at getPixivPage(): {sys.exc_info()}')
+                        raise PixivException(f"Failed to get page: {url}", errorCode=PixivException.SERVER_ERROR)
 
             if returnParsed:
                 parsedPage = BeautifulSoup(read_page, features="html5lib")
@@ -379,7 +383,7 @@ class PixivBrowser(mechanize.Browser):
                 raise Exception("Not logged in to FANBOX")
 
     def updateFanboxCookie(self):
-        p_req = mechanize.Request("https://www.pixiv.net/fanbox")
+        p_req = mechanize.Request("https://www.fanbox.cc/auth/start")
         p_req.add_header('Accept', 'application/json, text/plain, */*')
         p_req.add_header('Origin', 'https://www.pixiv.net')
         p_req.add_header('User-Agent', self._config.useragent)
@@ -514,7 +518,7 @@ class PixivBrowser(mechanize.Browser):
                     PixivHelper.print_and_log('info', f'My User Id: {self._myId}.')
 
         if self._myId == 0:
-            PixivHelper.print_and_log('info', 'Unable to get User Id')
+            PixivHelper.print_and_log('error', 'Unable to get User Id, please check your cookie.')
 
         self._isPremium = False
         temp = re.findall(r"pixiv.user.premium = (\w+);", parsed)
@@ -537,8 +541,14 @@ class PixivBrowser(mechanize.Browser):
         del page
         return r
 
-    def getImagePage(self, image_id, parent=None, from_bookmark=False,
-                     bookmark_count=-1, image_response_count=-1):
+    def getImagePage(self,
+                     image_id,
+                     parent=None,
+                     from_bookmark=False,
+                     bookmark_count=-1,
+                     image_response_count=-1,
+                     manga_series_order=-1,
+                     manga_series_parent=None) -> (PixivImage, str):
         image = None
         response = None
         PixivHelper.get_logger().debug("Getting image page: %s", image_id)
@@ -565,7 +575,9 @@ class PixivBrowser(mechanize.Browser):
                                    bookmark_count,
                                    image_response_count,
                                    dateFormat=self._config.dateFormat,
-                                   tzInfo=_tzInfo)
+                                   tzInfo=_tzInfo,
+                                   manga_series_order=manga_series_order,
+                                   manga_series_parent=manga_series_parent)
 
                 if image.imageMode == "ugoira_view":
                     ugoira_meta_url = "https://www.pixiv.net/ajax/illust/{0}/ugoira_meta".format(image_id)
@@ -612,22 +624,21 @@ class PixivBrowser(mechanize.Browser):
                     info = json.loads(infoStr)
                     self._put_to_cache(url, info)
             else:
-                PixivHelper.print_and_log('info', 'Using OAuth to retrieve member info for: {0}'.format(member_id))
-                if self._username is None or self._password is None or len(self._username) < 0 or len(
-                        self._password) < 0:
+                PixivHelper.print_and_log('info', f'Using OAuth to retrieve member info for: {member_id}')
+                if self._username is None or self._password is None or len(self._username) < 0 or len(self._password) < 0:
                     raise PixivException("Empty Username or Password, remove cookie value and relogin, or add username/password to config.ini.")
 
-                url = 'https://app-api.pixiv.net/v1/user/detail?user_id={0}'.format(
-                    member_id)
+                url = f'https://app-api.pixiv.net/v1/user/detail?user_id={member_id}'
                 info = self._get_from_cache(url)
                 if info is None:
                     PixivHelper.get_logger().debug("Getting member information: %s", member_id)
                     login_response = self._oauth_manager.login()
                     if login_response.status_code == 200:
                         info = json.loads(login_response.text)
-                        self._config.refresh_token = info["response"]["refresh_token"]
-                        self._config.writeConfig(
-                            path=self._config.configFileLocation)
+                        if self._config.refresh_token != info["response"]["refresh_token"]:
+                            PixivHelper.print_and_log('info', 'OAuth Refresh Token is updated, updating config.ini')
+                            self._config.refresh_token = info["response"]["refresh_token"]
+                            self._config.writeConfig(path=self._config.configFileLocation)
 
                     response = self._oauth_manager.get_user_info(member_id)
                     info = json.loads(response.text)
@@ -670,7 +681,7 @@ class PixivBrowser(mechanize.Browser):
             else:
                 raise PixivException(msg, errorCode=PixivException.OTHER_MEMBER_ERROR, htmlPage=errorMessage)
 
-    def getMemberPage(self, member_id, page=1, bookmark=False, tags=None, r18mode=False):
+    def getMemberPage(self, member_id, page=1, bookmark=False, tags=None, r18mode=False) -> (PixivArtist, str):
         artist = None
         response = None
         if tags is None:
@@ -716,8 +727,7 @@ class PixivBrowser(mechanize.Browser):
 
             PixivHelper.get_logger().debug(response)
             artist = PixivArtist(member_id, response, False, offset, limit)
-            artist.reference_image_id = artist.imageList[0] if len(
-                artist.imageList) > 0 else 0
+            artist.reference_image_id = artist.imageList[0] if len(artist.imageList) > 0 else 0
             self.getMemberInfoWhitecube(member_id, artist, bookmark)
 
             if artist.haveImages and need_to_slice:
@@ -853,18 +863,18 @@ class PixivBrowser(mechanize.Browser):
         ids = FanboxArtist.parseArtistIds(page=response)
         return ids
 
-    def fanboxGetArtistById(self, id):
+    def fanboxGetArtistById(self, artist_id):
         self.fanbox_is_logged_in()
-        if re.match(r"^\d+$", id):
+        if re.match(r"^\d+$", artist_id):
             id_type = "userId"
         else:
             id_type = "creatorId"
 
-        url = f'https://api.fanbox.cc/creator.get?{id_type}={id}'
+        url = f'https://api.fanbox.cc/creator.get?{id_type}={artist_id}'
         PixivHelper.print_and_log('info', f'Getting artist information from {url}')
         referer = "https://www.fanbox.cc"
         if id_type == "creatorId":
-            referer += f"/@{id}"
+            referer += f"/@{artist_id}"
 
         req = mechanize.Request(url)
         req.add_header('Accept', 'application/json, text/plain, */*')
@@ -895,6 +905,8 @@ class PixivBrowser(mechanize.Browser):
             artist.artistName = pixivArtist.artistName
             artist.artistToken = pixivArtist.artistToken
             return artist
+        else:
+            raise PixivException("Id does not exist", errorCode=PixivException.USER_ID_NOT_EXISTS)
 
     def fanboxGetPostsFromArtist(self, artist=None, next_url=""):
         ''' get all posts from the supported user
@@ -958,6 +970,76 @@ class PixivBrowser(mechanize.Browser):
         p_res.close()
         js = demjson.decode(p_response)
         return js
+
+    def sketch_get_post_by_post_id(self, post_id, artist=None):
+        # https://sketch.pixiv.net/api/replies/1213195054130835383.json
+        url = f"https://sketch.pixiv.net/api/replies/{post_id}.json"
+        referer = f"https://sketch.pixiv.net/items/{post_id}"
+        PixivHelper.get_logger().debug('Getting sketch post detail from %s', url)
+        response = self.getPixivPage(url, returnParsed=False, enable_cache=True, referer=referer)
+        self.handleDebugMediumPage(response, post_id)
+        _tzInfo = None
+        if self._config.useLocalTimezone:
+            _tzInfo = PixivHelper.LocalUTCOffsetTimezone()
+        post = SketchPost(post_id, artist, response, _tzInfo, self._config.dateFormat)
+        return post
+
+    def sketch_get_posts_by_artist_id(self, artist_id, max_page=0):
+        # get artist info
+        # https://sketch.pixiv.net/api/users/@camori.json
+        url = f"https://sketch.pixiv.net/api/users/@{artist_id}"
+        referer = f"https://sketch.pixiv.net/@{artist_id}"
+        PixivHelper.get_logger().debug('Getting sketch artist detail from %s', url)
+        response = self.getPixivPage(url, returnParsed=False, enable_cache=True, referer=referer)
+        self.handleDebugMediumPage(response, artist_id)
+        _tzInfo = None
+        if self._config.useLocalTimezone:
+            _tzInfo = PixivHelper.LocalUTCOffsetTimezone()
+        artist = SketchArtist(artist_id, response, _tzInfo, self._config.dateFormat)
+
+        # get artists posts
+        current_page = 1
+        while True:
+            # https://sketch.pixiv.net/api/walls/@camori/posts/public.json
+            url_posts = f"https://sketch.pixiv.net/api/walls/@{artist_id}/posts/public.json"
+            if artist.next_page is not None:
+                url_posts = f"https://sketch.pixiv.net{artist.next_page}"
+            PixivHelper.print_and_log("info", f"Getting page {current_page} from {url_posts}")
+            response_post = self.getPixivPage(url_posts, returnParsed=False, enable_cache=True, referer=referer)
+            self.handleDebugMediumPage(response, artist_id)
+            artist.parse_posts(response_post)
+
+            current_page = current_page + 1
+            if max_page != 0 and current_page > max_page:
+                break
+            if artist.next_page is None:
+                break
+
+        return artist
+
+    def getMangaSeries(self, manga_series_id: int, current_page: int) -> PixivMangaSeries:
+        PixivHelper.print_and_log("info", f"Getting Manga Series: {manga_series_id} from page: {current_page}")
+        # get the manga information
+        # https://www.pixiv.net/ajax/series/6474?p=5&lang=en
+        locale = ""
+        if self._locale is not None and len(self._locale) > 0:
+            locale = f"&lang={self._locale}"
+        url = f"https://www.pixiv.net/ajax/series/{manga_series_id}?p={current_page}{locale}"
+        response = self.getPixivPage(url, returnParsed=False, enable_cache=True)
+        manga_series = PixivMangaSeries(manga_series_id, current_page, payload=response)
+
+        # get the artist information from given manga list
+        PixivHelper.print_and_log("info", f" - Fetching artist details {manga_series.member_id}")
+        (artist, _) = self.getMemberPage(manga_series.member_id)
+        manga_series.artist = artist
+
+        # # get the image details from work list
+        # for (image_id, order) in manga_series.pages_with_order:
+        #     PixivHelper.print_and_log("info", f" - Fetching image details {image_id}")
+        #     (image, _) = self.getImagePage(image_id, parent=manga_series.artist, manga_series_order=order)
+        #     manga_series.images.append(image)
+
+        return manga_series
 
 
 def getBrowser(config=None, cookieJar=None):
@@ -1134,11 +1216,25 @@ def test():
             for post in posts:
                 print(post)
 
+        def testSketch():
+            # result = b.sketch_get_post_by_post_id("1213195054130835383")
+            # print(result)
+            result2 = b.sketch_get_posts_by_artist_id("camori")
+            print(result2)
+            for post in result2.posts:
+                print(post)
+
+        def testMangaSeries():
+            result = b.getMangaSeries(6474, 1)
+            result.print_info()
+
         testFanbox()
+        # testSketch()
         # testSearchTags()
-        # testImage()
+        testImage()
         # testMember()
-        # testMemberBookmark()
+        testMemberBookmark()
+        # testMangaSeries()
 
     else:
         print("Invalid username or password")

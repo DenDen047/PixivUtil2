@@ -22,6 +22,7 @@ class JobOption(object):
     rootDirectory = ""
     useTagsAsDir = False
     r18mode = False
+    extensionFilter = None
 
     def __init__(self, job, _config):
         if _config is None:
@@ -55,6 +56,8 @@ class JobOption(object):
                 self.useTagsAsDir = option_data["useTagsAsDir"]
             if "r18mode" in option_data:
                 self.r18mode = option_data["r18mode"]
+            if "extensionFilter" in option_data:
+                self.extensionFilter = option_data["extensionFilter"]
 
 
 def handle_members(caller, job, job_name, job_option):
@@ -84,6 +87,7 @@ def handle_members(caller, job, job_name, job_option):
 
     for member_id in member_ids:
         PixivArtistHandler.process_member(caller,
+                                          caller.__config__,
                                           member_id=member_id,
                                           user_dir=job_option.rootDirectory,
                                           page=start_page,
@@ -108,6 +112,7 @@ def handle_images(caller: PixivUtil2, job, job_name, job_option):
 
     for image_id in image_ids:
         PixivImageHandler.process_image(caller,
+                                        caller.__config__,
                                         image_id=image_id,
                                         user_dir=job_option.rootDirectory,
                                         title_prefix=job_name,
@@ -177,9 +182,16 @@ def handle_tags(caller, job, job_name, job_option):
                                   job_option=job_option)
 
 
-def process_batch_job(caller: PixivUtil2):
+def process_batch_job(caller: PixivUtil2, batch_file=None):
+    PixivHelper.get_logger().info('Batch Mode from json (b).')
     caller.set_console_title("Batch Menu")
-    if os.path.exists(_default_batch_filename):
+
+    if batch_file is None:
+        batch_file = _default_batch_filename
+
+    batch_file = os.path.abspath(batch_file)
+
+    if os.path.exists(batch_file):
         jobs_file = open(_default_batch_filename, encoding="utf-8")
         jobs = demjson.decode(jobs_file.read())
         for job_name in jobs["jobs"]:
@@ -204,7 +216,7 @@ def process_batch_job(caller: PixivUtil2):
             else:
                 print(f"Unsupported job_type {curr_job['job_type']} in {job_name}")
     else:
-        print(f"Cannot found {_default_batch_filename} in the application folder, see https://github.com/Nandaka/PixivUtil2/wiki/Using-Batch-Job-(Experimental) for example. ")
+        print(f"Cannot found {batch_file}, see https://github.com/Nandaka/PixivUtil2/wiki/Using-Batch-Job-(Experimental) for example. ")
 
     # restore original method
     # PixivHelper.print_and_log = temp_printer
@@ -219,8 +231,3 @@ def notifier(level, msg, exception=None, newline=True, end=None):
     msg = "{0:5} - {1}".format(level, msg)
     msg = msg.ljust(150)
     print(msg, end='\r')
-
-
-if __name__ == '__main__':
-    import PixivUtil2
-    process_batch_job(PixivUtil2)

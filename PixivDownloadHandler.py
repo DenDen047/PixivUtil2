@@ -325,26 +325,32 @@ def handle_ugoira(image, filename, config, notifier):
     if config.createApng:
         gif_filename = ugo_name[:-7] + ".png"
         if not os.path.exists(gif_filename):
-            PixivHelper.ugoira2apng(ugo_name, gif_filename, config.deleteUgoira, image=image)
+            try:
+                PixivHelper.ugoira2apng(ugo_name, gif_filename, config.deleteUgoira, image=image)
+            except Exception:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                traceback.print_exception(exc_type, exc_value, exc_traceback)
+                PixivHelper.print_and_log('error', f'Error at handle_ugoira(): {sys.exc_info()} at when converting image id: {image.imageId} to aPNG.')
+
     if config.createWebm:
-        gif_filename = ugo_name[:-7] + ".webm"
+        gif_filename = ugo_name[:-7] + "." + config.ffmpegExt
         if not os.path.exists(gif_filename):
             PixivHelper.ugoira2webm(ugo_name,
-                                gif_filename,
-                                config.deleteUgoira,
-                                config.ffmpeg,
-                                config.ffmpegCodec,
-                                config.ffmpegParam,
-                                "webm",
-                                image)
+                                    gif_filename,
+                                    config.deleteUgoira,
+                                    config.ffmpeg,
+                                    config.ffmpegCodec,
+                                    config.ffmpegParam,
+                                    config.ffmpegExt,
+                                    image)
     if config.createWebp:
         gif_filename = ugo_name[:-7] + ".webp"
         if not os.path.exists(gif_filename):
             PixivHelper.ugoira2webm(ugo_name,
-                                gif_filename,
-                                config.deleteUgoira,
-                                config.ffmpeg,
-                                config.webpCodec,
-                                config.webpParam,
-                                "webp",
-                                image)
+                                    gif_filename,
+                                    config.deleteUgoira,
+                                    config.ffmpeg,
+                                    config.webpCodec,
+                                    config.webpParam,
+                                    "webp",
+                                    image)

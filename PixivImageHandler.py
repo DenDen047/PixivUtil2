@@ -7,15 +7,20 @@ import sys
 import traceback
 import urllib
 
+from colorama import Fore, Style
+
 import datetime_z
 import PixivBrowserFactory
 import PixivConstant
-from PixivException import PixivException
-import PixivHelper
 import PixivDownloadHandler
+import PixivHelper
+from PixivException import PixivException
+
+__re_manga_page = re.compile(r'(\d+(_big)?_p\d+)')
 
 
 def process_image(caller,
+                  config,
                   artist=None,
                   image_id=None,
                   user_dir='',
@@ -25,19 +30,23 @@ def process_image(caller,
                   bookmark_count=-1,
                   image_response_count=-1,
                   notifier=None,
-                  job_option=None):
+                  job_option=None,
+                  useblacklist=True,
+                  manga_series_order=-1,
+                  manga_series_parent=None) -> int:
     # caller function/method
     # TODO: ideally to be removed or passed as argument
     db = caller.__dbManager__
-    config = caller.__config__
 
     if notifier is None:
         notifier = PixivHelper.dummy_notifier
 
     # override the config source if job_option is give for filename formats
     format_src = config
+    extension_filter = None
     if job_option is not None:
         format_src = job_option
+        extension_filter = job_option.extensionFilter
 
     parse_medium_page = None
     image = None
@@ -46,7 +55,7 @@ def process_image(caller,
     filename = f'no-filename-{image_id}.tmp'
 
     try:
-        msg = f'Processing Image Id: {image_id}'
+        msg = Fore.YELLOW + Style.NORMAL + f'Processing Image Id: {image_id}' + Style.RESET_ALL
         PixivHelper.print_and_log(None, msg)
         notifier(type="IMAGE", message=msg)
 
@@ -69,7 +78,9 @@ def process_image(caller,
             (image, parse_medium_page) = PixivBrowserFactory.getBrowser().getImagePage(image_id=image_id,
                                                                                        parent=artist,
                                                                                        from_bookmark=bookmark,
-                                                                                       bookmark_count=bookmark_count)
+                                                                                       bookmark_count=bookmark_count,
+                                                                                       manga_series_order=manga_series_order,
+                                                                                       manga_series_parent=manga_series_parent)
             if len(title_prefix) > 0:
                 caller.set_console_title(f"{title_prefix} ImageId: {image.imageId}")
             else:
@@ -109,32 +120,54 @@ def process_image(caller,
         if config.dateDiff > 0:
             if image.worksDateDateTime != datetime.datetime.fromordinal(1).replace(tzinfo=datetime_z.utc):
                 if image.worksDateDateTime < (datetime.datetime.today() - datetime.timedelta(config.dateDiff)).replace(tzinfo=datetime_z.utc):
-                    PixivHelper.print_and_log('info', f'Skipping image_id: {image_id} because contains older than: {config.dateDiff} day(s).')
+                    PixivHelper.print_and_log('warn', f'Skipping image_id: {image_id} – it\'s older than: {config.dateDiff} day(s).')
                     download_image_flag = False
                     result = PixivConstant.PIXIVUTIL_SKIP_OLDER
 
-        if config.useBlacklistMembers and download_image_flag:
-            if str(image.originalArtist.artistId) in caller.__blacklistMembers:
-                PixivHelper.print_and_log('info', f'Skipping image_id: {image_id} because contains blacklisted member id: {image.originalArtist.artistId}')
-                download_image_flag = False
-                result = PixivConstant.PIXIVUTIL_SKIP_BLACKLIST
-
-        if config.useBlacklistTags and download_image_flag:
-            for item in caller.__blacklistTags:
-                if item in image.imageTags:
-                    PixivHelper.print_and_log('info', f'Skipping image_id: {image_id} because contains blacklisted tags: {item}')
+        if useblacklist:
+            if config.useBlacklistMembers and download_image_flag:
+                if str(image.originalArtist.artistId) in caller.__blacklistMembers:
+                    PixivHelper.print_and_log('warn', f'Skipping image_id: {image_id} – blacklisted member id: {image.originalArtist.artistId}')
                     download_image_flag = False
                     result = PixivConstant.PIXIVUTIL_SKIP_BLACKLIST
-                    break
 
-        if config.useBlacklistTitles and download_image_flag:
-            for item in caller.__blacklistTitles:
-                if item in image.imageTitle:
-                    PixivHelper.print_and_log('info', f'Skipping image_id: {image_id} because contains blacklisted Title: {item}')
+            if config.useBlacklistTags and download_image_flag:
+                for item in caller.__blacklistTags:
+                    if item in image.imageTags:
+                        PixivHelper.print_and_log('warn', f'Skipping image_id: {image_id} – blacklisted tag: {item}')
+                        download_image_flag = False
+                        result = PixivConstant.PIXIVUTIL_SKIP_BLACKLIST
+                        break
+
+            if config.useBlacklistTitles and download_image_flag:
+                if config.useBlacklistTitlesRegex:
+                    for item in caller.__blacklistTitles:
+                        if re.search(rf"{item}", image.imageTitle):
+                            PixivHelper.print_and_log('warn', f'Skipping image_id: {image_id} – Title matched: {item}')
+                            download_image_flag = False
+                            result = PixivConstant.PIXIVUTIL_SKIP_BLACKLIST
+                            break
+                else:
+                    for item in caller.__blacklistTitles:
+                        if item in image.imageTitle:
+                            PixivHelper.print_and_log('warn', f'Skipping image_id: {image_id} – Title contained: {item}')
+                            download_image_flag = False
+                            result = PixivConstant.PIXIVUTIL_SKIP_BLACKLIST
+                            break
+
+        # Issue #726
+        if extension_filter is not None and len(extension_filter) > 0:
+            for url in image.imageUrls:
+                ext = PixivHelper.get_extension_from_url(url)
+
+                # add alias for ugoira
+                if "ugoira" in extension_filter:
+                    extension_filter = f"{extension_filter}|zip"
+
+                if re.match(extension_filter, ext) is None:
                     download_image_flag = False
-                    result = PixivConstant.PIXIVUTIL_SKIP_BLACKLIST
+                    PixivHelper.print_and_log('warn', f'Skipping image_id: {image_id} – url is not in the filter: {extension_filter} => {url}')
                     break
-
 
         if download_image_flag and not caller.DEBUG_SKIP_DOWNLOAD_IMAGE:
             if artist is None:
@@ -204,7 +237,7 @@ def process_image(caller,
                     filename = PixivHelper.sanitize_filename(filename, target_dir)
 
                     if image.imageMode == 'manga' and config.createMangaDir:
-                        manga_page = caller.__re_manga_page.findall(filename)
+                        manga_page = __re_manga_page.findall(filename)
                         if len(manga_page) > 0:
                             splitted_filename = filename.split(manga_page[0][0], 1)
                             splitted_manga_page = manga_page[0][0].split("_p", 1)
@@ -313,4 +346,66 @@ def process_image(caller,
             PixivHelper.dump_html(dump_filename, parse_medium_page)
             PixivHelper.print_and_log('error', f'Dumping html to: {dump_filename}')
 
+        raise
+
+
+def process_manga_series(caller,
+                         config,
+                         manga_series_id: int,
+                         start_page: int = 1,
+                         end_page: int = 0,
+                         notifier=None,
+                         job_option=None):
+    if notifier is None:
+        notifier = PixivHelper.dummy_notifier
+    try:
+        msg = Fore.YELLOW + Style.NORMAL + f'Processing Manga Series Id: {manga_series_id}' + Style.RESET_ALL
+        PixivHelper.print_and_log(None, msg)
+        notifier(type="MANGA_SERIES", message=msg)
+
+        if start_page != 1:
+            PixivHelper.print_and_log('info', 'Start Page: ' + str(start_page))
+        if end_page != 0:
+            PixivHelper.print_and_log('info', 'End Page: ' + str(end_page))
+
+        flag = True
+        current_page = start_page
+        while flag:
+            manga_series = PixivBrowserFactory.getBrowser().getMangaSeries(manga_series_id, current_page)
+            for (image_id, order) in manga_series.pages_with_order:
+                result = process_image(caller,
+                                       config,
+                                       artist=manga_series.artist,
+                                       image_id=image_id,
+                                       user_dir='',
+                                       bookmark=False,
+                                       search_tags='',
+                                       title_prefix="",
+                                       bookmark_count=-1,
+                                       image_response_count=-1,
+                                       notifier=notifier,
+                                       job_option=job_option,
+                                       useblacklist=True,
+                                       manga_series_order=order,
+                                       manga_series_parent=manga_series)
+                PixivHelper.wait(result, config)
+            current_page += 1
+            if manga_series.is_last_page:
+                PixivHelper.print_and_log('info', f'Last Page {manga_series.current_page}')
+                flag = False
+            if current_page > end_page and end_page != 0:
+                PixivHelper.print_and_log('info', f'End Page reached {end_page}')
+                flag = False
+            if manga_series.pages_with_order is None or len(manga_series.pages_with_order) == 0:
+                PixivHelper.print_and_log('info', f'No more works.')
+                flag = False
+
+    except Exception as ex:
+        if isinstance(ex, KeyboardInterrupt):
+            raise
+        caller.ERROR_CODE = getattr(ex, 'errorCode', -1)
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        PixivHelper.print_and_log('error', f'Error at process_manga_series(): {manga_series_id}')
+        PixivHelper.print_and_log('error', f'Exception: {sys.exc_info()}')
         raise

@@ -23,6 +23,7 @@ class FanboxArtist(object):
 
     SUPPORTING = 0
     FOLLOWING = 1
+    CUSTOM = 2
 
     @classmethod
     def parseArtistIds(cls, page):
@@ -414,9 +415,7 @@ class FanboxPost(object):
                 try:
                     v = os.path.relpath(v, html_dir)
                 except ValueError:
-                    PixivHelper.get_logger() \
-                        .exception("Error when converting local paths to relative ones, absolute paths are used",
-                                   filename, self.imageId)
+                    PixivHelper.get_logger().exception("Error when converting local paths to relative ones, absolute paths are used", filename, self.imageId)
                     v = "file://" + v
             else:
                 v = "file://" + v
