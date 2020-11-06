@@ -1,4 +1,17 @@
-20201009-beta1
+20201031
+- Merge Fix bug of header (#853) by markhuang3310.
+- Merge Added Series Info and conditionals to JSON/txt, and removed an unneccesary string format (#851) by byjtje.
+- Update readme.md (please read...)
+- monkey-patch cloudscraper method for browsers.json filepath resolution.
+- update cacert.pem path resolution to count if the exe being called from different folder
+
+20201025
+- Merge To be consistent with PixivBatchHandler. Fix #844 (#845) by fireattack.
+- Implement #842: to use cacert.pem from the root directory if frozen.
+  - need to modify cloudscraper library to inherit 'verify' attribute from given Session object
+- Merge Sketch default date fix (#841) by byjtje
+
+20201024
 - add cmd logging when converting ugoira.
 - Implement #406: add option 13: download by manga series
   - Specific for filenameMangaFormat in Manga Series mode (option 13):
@@ -11,6 +24,27 @@
     -> %manga_series_desc%
        original manga series description, different from work description.
 - Merge #806 fix for Fanbox EndPage input parameter (#808) by amatuerCoder.
+- Implement #812: handle different Sketch and Pixiv artist id.
+  - add new filename format `%sketch_member_id%` for PixivSketch
+- Fix Issue #822: Update parser for user's image bookmark.
+- Fix Issue #827: Update parser to NOT use AppAPI/oAuth to get member token.
+- Fix Issue #824: Update argument parser for option 6.
+- Add new configuration `checkLastModified` in `[DownloadControl]` for Issue #807
+  -  This will compare last-modified time with works date, require `setlastmodified = True` in config.ini to work properly.
+- Throw error if cannot get the user id during login, related to #831
+- Merge Adding Filename option for Sketch and fixing dates and Unix filenames (#836) by byjtje
+  - change default dateFormat to %Y-%m-%d (YYYY-MM-DD)
+- Fix Issue #838: delete zip/ugoira handling.
+- Add new start parameter:
+  - --start_date and --end_date for option 3, 7, and 9
+  - --tag_sort_order to set sorting order for option 3 and 7
+- Add check if ffmpeg exist or not if ugoira conversion is enabled.
+- Implement #837: add new config to skip downloading if `alwaysCheckFileSize = True` and remote file size is unknown => skipUnknownSize.
+- Update #814: replace requests with cloudscrapper for oAuth handling.
+- Implement #834: additional tag sorting order for premium users.
+  - order=popular_d (overall), popular_male_d (popular among male users) and popular_female_d.
+- Merge Fix error in PixivHelper.py:173 - TypeError expects String, not Int (#832) by Jared Shields.
+- update test cases and libraries.
 
 20201006
 - Implement #797: reload blacklist on after reloading main menu.

@@ -58,13 +58,15 @@ class PixivImage (object):
     imageResizedUrls = []
     worksDate = ""
     worksResolution = ""
-    worksTools = ""
+    seriesNavData = ""
+    rawJSON = {}
     jd_rtv = 0
     jd_rtc = 0
     # jd_rtt = 0
     imageCount = 0
     fromBookmark = False
     worksDateDateTime = datetime.fromordinal(1)
+    js_createDate = None
     bookmark_count = -1
     image_response_count = -1
     ugoira_data = ""
@@ -88,7 +90,8 @@ class PixivImage (object):
                  dateFormat=None,
                  tzInfo=None,
                  manga_series_order=-1,
-                 manga_series_parent=None):
+                 manga_series_parent=None,
+                 writeRawJSON=False):
         self.artist = parent
         self.fromBookmark = fromBookmark
         self.bookmark_count = bookmark_count
@@ -148,12 +151,15 @@ class PixivImage (object):
                 self.originalArtist = self.artist
 
             # parse image
-            self.ParseInfo(payload)
+            self.ParseInfo(payload, writeRawJSON)
 
-    def ParseInfo(self, page):
+    def ParseInfo(self, page, writeRawJSON):
         key = list(page["illust"].keys())[0]
         assert(str(key) == str(self.imageId))
         root = page["illust"][key]
+        #save the JSON if writeRawJSON is enabled
+        if writeRawJSON:
+            self.rawJSON = root
 
         self.imageUrls = list()
         self.imageResizedUrls = list()
@@ -195,7 +201,8 @@ class PixivImage (object):
         # title/caption
         self.imageTitle = root["illustTitle"]
         self.imageCaption = root["illustComment"]
-
+        # Series
+        self.seriesNavData = root["seriesNavData"]
         # view count
         self.jd_rtv = root["viewCount"]
         # like count
@@ -216,21 +223,19 @@ class PixivImage (object):
 
         # datetime, in utc
         # "createDate" : "2018-06-08T15:00:04+00:00",
-        self.worksDateDateTime = datetime_z.parse_datetime(str(root["createDate"]))
+        self.worksDateDateTime = datetime_z.parse_datetime(root["createDate"])
+        self.js_createDate = root["createDate"]  # store for json file
         # Issue #420
         if self._tzInfo is not None:
             self.worksDateDateTime = self.worksDateDateTime.astimezone(self._tzInfo)
 
-        tempDateFormat = self.dateFormat or "%m/%d/%y %H:%M"  # 2/27/2018 12:31
+        tempDateFormat = self.dateFormat or "%Y-%m-%d"     # 2018-07-22, else configured in config.ini
         self.worksDate = self.worksDateDateTime.strftime(tempDateFormat)
 
         # resolution
         self.worksResolution = "{0}x{1}".format(root["width"], root["height"])
         if self.imageCount > 1:
             self.worksResolution = "Multiple images: {0}P".format(self.imageCount)
-
-        # tools = No more tool information
-        self.worksTools = ""
 
         self.bookmark_count = root["bookmarkCount"]
         self.image_response_count = root["responseCount"]
@@ -333,7 +338,6 @@ class PixivImage (object):
         # PixivHelper.safePrint('total : ' + str(self.jd_rtt))
         PixivHelper.safePrint('Date : ' + self.worksDate)
         PixivHelper.safePrint('Resolution : ' + self.worksResolution)
-        PixivHelper.safePrint('Tools : ' + self.worksTools)
         return ""
 
     def ParseBookmarkDetails(self, page):
@@ -367,27 +371,31 @@ class PixivImage (object):
             info = codecs.open(str(self.imageId) + ".txt", 'wb', encoding='utf-8')
             PixivHelper.get_logger().exception("Error when saving image info: %s, file is saved to: %s.txt", filename, str(self.imageId))
 
-        info.write("ArtistID      = " + str(self.artist.artistId) + "\r\n")
-        info.write("ArtistName    = " + self.artist.artistName + "\r\n")
-        info.write("ImageID       = " + str(self.imageId) + "\r\n")
-        info.write("Title         = " + self.imageTitle + "\r\n")
-        info.write("Caption       = " + self.imageCaption + "\r\n")
-        info.write("Tags          = " + ", ".join(self.imageTags) + "\r\n")
-        info.write("Image Mode    = " + self.imageMode + "\r\n")
-        info.write("Pages         = " + str(self.imageCount) + "\r\n")
-        info.write("Date          = " + self.worksDate + "\r\n")
-        info.write("Resolution    = " + self.worksResolution + "\r\n")
-        info.write("Tools         = " + self.worksTools + "\r\n")
-        info.write("BookmarkCount = " + str(self.bookmark_count) + "\r\n")
-        info.write("Link          = https://www.pixiv.net/en/artworks/{0}\r\n".format(self.imageId))
-        info.write("Ugoira Data   = " + str(self.ugoira_data) + "\r\n")
+        info.write(f"ArtistID      = {self.artist.artistId}\r\n")
+        info.write(f"ArtistName    = {self.artist.artistName}\r\n")
+        info.write(f"ImageID       = {self.imageId}\r\n")
+        info.write(f"Title         = {self.imageTitle}\r\n")
+        if self.seriesNavData:
+            info.write(f"SeriesTitle   = {self.seriesNavData['title']}\r\n")
+            info.write(f"SeriesOrder   = {self.seriesNavData['order']}\r\n")
+            info.write(f"SeriesId      = {self.seriesNavData['seriesId']}\r\n")
+        info.write(f"Caption       = {self.imageCaption}\r\n")
+        info.write(f"Tags          = {', '.join(self.imageTags)}\r\n")
+        info.write(f"Image Mode    = {self.imageMode}\r\n")
+        info.write(f"Pages         = {self.imageCount}\r\n")
+        info.write(f"Date          = {self.worksDateDateTime}\r\n")
+        info.write(f"Resolution    = {self.worksResolution}\r\n")
+        info.write(f"BookmarkCount = {self.bookmark_count}\r\n")
+        info.write(f"Link          = http://www.pixiv.net/en/artworks/{self.imageId}\r\n")
+        if self.ugoira_data:
+            info.write(f"Ugoira Data   = {self.ugoira_data}\r\n")
         if len(self.descriptionUrlList) > 0:
             info.write("Urls          =\r\n")
             for link in self.descriptionUrlList:
-                info.write(" - " + link + "\r\n")
+                info.write(f" - {link}\r\n")
         info.close()
 
-    def WriteJSON(self, filename):
+    def WriteJSON(self, filename, JSONfilter):
         info = None
         try:
             # Issue #421 ensure subdir exists.
@@ -396,28 +404,60 @@ class PixivImage (object):
         except IOError:
             info = codecs.open(str(self.imageId) + ".json", 'w', encoding='utf-8')
             PixivHelper.get_logger().exception("Error when saving image info: %s, file is saved to: %s.json", filename, self.imageId)
+        if self.rawJSON:
+            jsonInfo=self.rawJSON
+            if JSONfilter:
+                for x in JSONfilter.split(","):
+                    del jsonInfo[x.strip()]
+            if self.ugoira_data:
+                jsonInfo["Ugoira Data"] = self.ugoira_data
+            info.write(json.dumps(jsonInfo, ensure_ascii=False, indent=4))
+            info.close()
+        else:
+            # Fix Issue #481
+            jsonInfo = collections.OrderedDict()
+            jsonInfo["Artist ID"] = self.artist.artistId
+            jsonInfo["Artist Name"] = self.artist.artistName
+            jsonInfo["Image ID"] = self.imageId
+            if self.seriesNavData:
+                jsonInfo["Series Data"] = self.seriesNavData
+            jsonInfo["Title"] = self.imageTitle
+            jsonInfo["Caption"] = self.imageCaption
+            jsonInfo["Tags"] = self.imageTags
+            jsonInfo["Image Mode"] = self.imageMode
+            jsonInfo["Pages"] = self.imageCount
+            jsonInfo["Date"] = self.js_createDate
+            jsonInfo["Resolution"] = self.worksResolution
+            jsonInfo["BookmarkCount"] = self.bookmark_count
+            jsonInfo["Link"] = f"https://www.pixiv.net/en/artworks/{self.imageId}"
+            if self.ugoira_data:
+                jsonInfo["Ugoira Data"] = self.ugoira_data
+            if len(self.descriptionUrlList) > 0:
+                jsonInfo["Urls"] = self.descriptionUrlList
+            info.write(json.dumps(jsonInfo, ensure_ascii=False, indent=4))
+            info.close()
 
-        # Fix Issue #481
-        jsonInfo = collections.OrderedDict()
-        jsonInfo["Artist ID"] = self.artist.artistId
-        jsonInfo["Artist Name"] = self.artist.artistName
-        jsonInfo["Image ID"] = self.imageId
-        jsonInfo["Title"] = self.imageTitle
-        jsonInfo["Caption"] = self.imageCaption
-        jsonInfo["Tags"] = self.imageTags
-        jsonInfo["Image Mode"] = self.imageMode
-        jsonInfo["Pages"] = self.imageCount
-        jsonInfo["Date"] = self.worksDate
-        jsonInfo["Resolution"] = self.worksResolution
-        jsonInfo["Tools"] = self.worksTools
-        jsonInfo["BookmarkCount"] = self.bookmark_count
-        jsonInfo["Link"] = "https://www.pixiv.net/en/artworks/{0}".format(self.imageId)
-        jsonInfo["Ugoira Data"] = self.ugoira_data
-        if len(self.descriptionUrlList) > 0:
-            jsonInfo["Urls"] = self.descriptionUrlList
-
-        info.write(json.dumps(jsonInfo, ensure_ascii=False, indent=4))
-        info.close()
+    def WriteSeriesData(self, seriesId, seriesDownloaded, filename):
+        from PixivBrowserFactory import getBrowser
+        try:
+            # Issue #421 ensure subdir exists.
+            PixivHelper.makeSubdirs(filename)
+            outfile = codecs.open(filename, 'w', encoding='utf-8')
+        except IOError:
+            outfile = codecs.open("Series " + str(seriesId) + ".json", 'w', encoding='utf-8')
+            PixivHelper.get_logger().exception("Error when saving image info: %s, file is saved to: %s.json", filename, "Series " + str(seriesId) + ".json")
+        receivedJSON = json.loads(getBrowser().getMangaSeries(seriesId,1,returnJSON=True))
+        jsondata = receivedJSON["body"]["illustSeries"][0]
+        jsondata.update(receivedJSON["body"]["page"])
+        pages = jsondata["total"]//12+2
+        for x in range(2,pages):
+            receivedJSON = json.loads(getBrowser().getMangaSeries(seriesId,x,returnJSON=True))
+            jsondata["series"].extend(receivedJSON["body"]["page"]["series"])
+        for x in ["recentUpdatedWorkIds","otherSeriesId","seriesId","isSetCover","firstIllustId","coverImageSl","url"]:
+            del jsondata[x]
+        outfile.write(json.dumps(jsondata, ensure_ascii=False))
+        outfile.close()
+        seriesDownloaded.append(seriesId)
 
     def WriteUgoiraData(self, filename):
         info = None
@@ -431,7 +471,7 @@ class PixivImage (object):
         info.write(str(self.ugoira_data))
         info.close()
 
-    def CreateUgoira(self, filename):
+    def create_ugoira(self, filename) -> bool:
         if len(self.ugoira_data) == 0:
             PixivHelper.get_logger().exception("Missing ugoira animation info for image: %d", self.imageId)
 
@@ -444,6 +484,7 @@ class PixivImage (object):
         jsStr = self.ugoira_data[:-1] + r',"zipSize":' + str(zipSize) + r'}'
         with zipfile.ZipFile(zipTarget, mode="a") as z:
             z.writestr("animation.json", jsStr)
+        return True
 
     def parseJs(self, page):
         parsed = BeautifulSoup(page, features="html5lib")
@@ -511,6 +552,6 @@ class PixivMangaSeries:
         PixivHelper.safePrint(f'Title          : {self.title}')
         PixivHelper.safePrint(f'Description    : {self.description}')
         PixivHelper.safePrint(f'Pages          : {self.current_page} of {int(self.total_works/works_per_page)}')
-        PixivHelper.safePrint(f'Works          :')
+        PixivHelper.safePrint('Works          :')
         for (work_id, order) in self.pages_with_order:
             PixivHelper.safePrint(f' - [{order}] {work_id}')

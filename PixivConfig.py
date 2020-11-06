@@ -87,6 +87,9 @@ class PixivConfig():
         ConfigItem("Settings", "tagsLimit", -1),
         ConfigItem("Settings", "writeImageInfo", False),
         ConfigItem("Settings", "writeImageJSON", False),
+        ConfigItem("Settings", "writeRawJSON", False),
+        ConfigItem("Settings", "RawJSONFilter", "id,title,description,alt,userIllusts,storableTags,zoneConfig,extraData,comicPromotion,fanboxPromotion"),
+        ConfigItem("Settings", "includeSeriesJSON", False),
         ConfigItem("Settings", "verifyImage", False),
         ConfigItem("Settings", "writeUrlInDescription", False),
         ConfigItem("Settings", "urlBlacklistRegex", ""),
@@ -108,6 +111,11 @@ class PixivConfig():
                    restriction=lambda x: x is not None and len(x) > 0),
         ConfigItem("Filename", "filenameMangaInfoFormat",
                    "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
+                   restriction=lambda x: x is not None and len(x) > 0),
+        ConfigItem("Filename", "filenameSeriesJSON",
+                   "%artist% (%member_id%)" + os.sep + "%manga_series_id% - %manga_series_title%",
+                   restriction=lambda x: x is not None and len(x) > 0),
+        ConfigItem("Filename", "filenameFormatSketch", "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
                    restriction=lambda x: x is not None and len(x) > 0),
         ConfigItem("Filename", "avatarNameFormat", ""),
         ConfigItem("Filename", "backgroundNameFormat", ""),
@@ -177,6 +185,8 @@ class PixivConfig():
         ConfigItem("DownloadControl", "enableInfiniteLoop", False),
         ConfigItem("DownloadControl", "useBlacklistMembers", False),
         ConfigItem("DownloadControl", "downloadResized", False),
+        ConfigItem("DownloadControl", "checkLastModified", True),
+        ConfigItem("DownloadControl", "skipUnknownSize", False),
     ]
 
     proxy = {"http": "", "https": "", }
