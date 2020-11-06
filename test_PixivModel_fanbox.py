@@ -2,14 +2,17 @@
 # -*- coding: UTF-8 -*-
 
 import os
+import platform
 import unittest
 
 import demjson
 
+import PixivConstant
 import PixivHelper
 from PixivModelFanbox import FanboxArtist, FanboxPost
 
 temp = PixivHelper.__re_manga_index
+PixivConstant.PIXIVUTIL_LOG_FILE = 'pixivutil.test.log'
 
 
 class TestPixivModel_Fanbox(unittest.TestCase):
@@ -324,7 +327,11 @@ class TestPixivModel_Fanbox(unittest.TestCase):
                                                  searchTags='')
             filename = PixivHelper.sanitize_filename(filename, root_dir)
 
-            self.assertEqual(filename, root_dir + os.sep + u"15521131" + os.sep + u"136761_p0_アスナさん０２_136761_p0_hcXl48iORoJykmrR3zPZEoUu_2018-08-26 20_28_16.jpeg")
+            expected_name = root_dir + os.sep + u"15521131" + os.sep + u"136761_p0_アスナさん０２_136761_p0_hcXl48iORoJykmrR3zPZEoUu_2018-08-26 20:28:16.jpeg"
+            if platform.system() == 'Windows':
+                expected_name = root_dir + os.sep + u"15521131" + os.sep + u"136761_p0_アスナさん０２_136761_p0_hcXl48iORoJykmrR3zPZEoUu_2018-08-26 20_28_16.jpeg"
+
+            self.assertEqual(filename, expected_name)
         more_format()
 
         def cover_more_format():
@@ -343,7 +350,11 @@ class TestPixivModel_Fanbox(unittest.TestCase):
                                                  searchTags='')
             filename = PixivHelper.sanitize_filename(filename, root_dir)
 
-            self.assertEqual(filename, root_dir + os.sep + u"15521131" + os.sep + u"136761_アスナさん０２_136761_OqhhcslOfbzZpHyTfJNtnIWm_2018-08-26 20_28_16.jpeg")
+            expected_name = root_dir + os.sep + u"15521131" + os.sep + u"136761_アスナさん０２_136761_OqhhcslOfbzZpHyTfJNtnIWm_2018-08-26 20:28:16.jpeg"
+            if platform.system() == 'Windows':
+                expected_name = root_dir + os.sep + u"15521131" + os.sep + u"136761_アスナさん０２_136761_OqhhcslOfbzZpHyTfJNtnIWm_2018-08-26 20_28_16.jpeg"
+
+            self.assertEqual(filename, expected_name)
         cover_more_format()
 
     def test_links_in_p_tags(self):

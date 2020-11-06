@@ -5,13 +5,17 @@ import unittest
 
 from bs4 import BeautifulSoup
 
+import PixivConstant
+from PixivArtist import PixivArtist
+from PixivBookmark import PixivBookmark, PixivNewIllustBookmark
 from PixivBrowserFactory import PixivBrowser
 from PixivException import PixivException
-from PixivArtist import PixivArtist
+from PixivGroup import PixivGroup
 from PixivImage import PixivImage
 from PixivTags import PixivTags
-from PixivGroup import PixivGroup
-from PixivBookmark import PixivBookmark, PixivNewIllustBookmark
+
+PixivConstant.PIXIVUTIL_LOG_FILE = 'pixivutil.test.log'
+last_page = 52
 
 
 class MockPixivBrowser(PixivBrowser):
@@ -99,7 +103,7 @@ class TestPixivImage(unittest.TestCase):
     def testPixivImageParseInfo(self):
         p = open('./test/test-image-info.html', 'r', encoding="utf-8")
         page = p.read()
-        image2 = PixivImage(32039274, page)
+        image2 = PixivImage(32039274, page, dateFormat='%Y-%m-%d %H:%M')
 
         self.assertEqual(image2.imageId, 32039274)
         self.assertEqual(image2.imageTitle, u"新しいお姫様")
@@ -121,7 +125,7 @@ class TestPixivImage(unittest.TestCase):
         self.assertEqual(image2.tags[3].get_translation(locale="en"), "incredibly cute")
 
         self.assertEqual(image2.imageMode, "big")
-        self.assertEqual(image2.worksDate, '12/10/12 15:23')
+        self.assertEqual(image2.worksDate, '2012-12-10 15:23')
         self.assertEqual(image2.worksResolution, '642x900')
         self.assertEqual(len(image2.imageUrls), 1)
         self.assertEqual(len(image2.imageResizedUrls), 1)
@@ -184,7 +188,7 @@ class TestPixivImage(unittest.TestCase):
         self.assertTrue(u'セイバー・ブライド' in image2.imageTags)
 
         self.assertEqual(image2.imageMode, "big")
-        self.assertEqual(image2.worksDate, '03/14/18 09:00')
+        self.assertEqual(image2.worksDate, '2018-03-14')
         self.assertEqual(image2.worksResolution, '721x1200')
         self.assertEqual(image2.artist.artistToken, 'kawanocyan')
 
@@ -224,7 +228,7 @@ class TestPixivImage(unittest.TestCase):
         self.assertEqual(image.imageId, 20496355)
         # 07/22/2011 03:09｜512×600｜RETAS STUDIO&nbsp;
         # print(image.worksDate, image.worksResolution, image.worksTools)
-        self.assertEqual(image.worksDate, '07/21/11 18:09')
+        self.assertEqual(image.worksDate, '2011-07-21')
         self.assertEqual(image.worksResolution, '512x600')
         # self.assertEqual(image.worksTools, 'RETAS STUDIO')
 
@@ -235,7 +239,7 @@ class TestPixivImage(unittest.TestCase):
 
         self.assertNotEqual(image, None)
         self.assertEqual(image.imageId, 11164869)
-        self.assertEqual(image.worksDate, '06/08/10 17:33')
+        self.assertEqual(image.worksDate, '2010-06-08')
         self.assertEqual(image.worksResolution, '1009x683')
         # self.assertEqual(image.worksTools, u'SAI')
         # print(image.imageTags)
@@ -249,7 +253,7 @@ class TestPixivImage(unittest.TestCase):
 
         self.assertNotEqual(image, None)
         self.assertEqual(image.imageId, 9175987)
-        self.assertEqual(image.worksDate, '03/05/10 18:04')
+        self.assertEqual(image.worksDate, '2010-03-05')
         self.assertEqual(image.worksResolution, '1155x768')
         # self.assertEqual(image.worksTools, u'SAI')
         self.assertEqual(image.imageTags, [])
@@ -258,7 +262,7 @@ class TestPixivImage(unittest.TestCase):
         # print('\nTesting image page - big')
         p = open('./test/test-image-unicode.htm', 'r', encoding="utf-8")
         page = p.read()
-        image = PixivImage(2493913, page)
+        image = PixivImage(2493913, page, dateFormat="%m/%d/%y %H:%M")
 
         self.assertNotEqual(image, None)
         self.assertEqual(image.imageId, 2493913)
@@ -321,7 +325,7 @@ class TestPixivImage(unittest.TestCase):
         # Issue #224
         p = open('./test/test-image-big-manga-mixed.html', 'r', encoding="utf-8")
         page = p.read()
-        image = PixivImage(iid=67487303, page=page)
+        image = PixivImage(iid=67487303, page=page, dateFormat="%m/%d/%y %H:%M")
         # image.PrintInfo()
 
         self.assertTrue(u'R-18' in image.imageTags)
@@ -430,7 +434,7 @@ class TestPixivImage(unittest.TestCase):
         # assuming being accessed via manage page for your own artwork.
         p = open('./test/test-image-selfimage.htm', 'r', encoding="utf-8")
         page = p.read()
-        image2 = PixivImage(65079382, page)
+        image2 = PixivImage(65079382, page, dateFormat="%m/%d/%y %H:%M")
 
         self.assertEqual(image2.imageId, 65079382)
         self.assertEqual(image2.imageTitle, u"Test")
@@ -459,7 +463,7 @@ class TestPixivBookmark(unittest.TestCase):
         page = p.read()
         result = PixivBookmark.parseImageBookmark(page)
 
-        self.assertEqual(len(result), 18)
+        self.assertEqual(len(result), 19)
         self.assertTrue(35303260 in result)
         self.assertTrue(28629066 in result)
         self.assertTrue(27249307 in result)
@@ -525,7 +529,7 @@ class TestPixivTags(unittest.TestCase):
 
         self.assertEqual(len(image.itemList), 60)
         self.assertEqual(image.isLastPage, False)
-        self.assertEqual(image.availableImages, 2269)
+        self.assertEqual(image.availableImages, 2298)
 
     # tags.php?tag=%E3%81%93%E3%81%AE%E4%B8%AD%E3%81%AB1%E4%BA%BA%E3%80%81%E5%A6%B9%E3%81%8C%E3%81%84%E3%82%8B%21
     def testTagsSearchExact(self):
@@ -547,14 +551,13 @@ class TestPixivTags(unittest.TestCase):
         p = open(path, 'r', encoding="utf-8")
         response = p.read()
         tags = ''
-        current_page = 49
 
         image = PixivTags()
-        image.parseTags(response, tags, current_page)
+        image.parseTags(response, tags, last_page)
 
         print(image.itemList[-1])
         self.assertEqual(image.isLastPage, True)
-        self.assertEqual(image.itemList[-1].imageId, 544700)
+        self.assertEqual(image.itemList[-1].imageId, 740933)
 
     # search.php?s_mode=s_tag&word=%E5%88%9D%E6%98%A5%E9%A3%BE%E5%88%A9
     def testTagsSearchPartial(self):
@@ -636,7 +639,7 @@ class TestPixivGroup(unittest.TestCase):
     def testParseJson(self):
         path = './test/group.json'
         p = open(path)
-        result = PixivGroup(p)
+        result = PixivGroup(p.read())
 
         self.assertEqual(len(result.imageList), 35)
         self.assertEqual(len(result.externalImageList), 1)

@@ -1,3 +1,97 @@
+20201031
+- Merge Fix bug of header (#853) by markhuang3310.
+- Merge Added Series Info and conditionals to JSON/txt, and removed an unneccesary string format (#851) by byjtje.
+- Update readme.md (please read...)
+- monkey-patch cloudscraper method for browsers.json filepath resolution.
+- update cacert.pem path resolution to count if the exe being called from different folder
+
+20201025
+- Merge To be consistent with PixivBatchHandler. Fix #844 (#845) by fireattack.
+- Implement #842: to use cacert.pem from the root directory if frozen.
+  - need to modify cloudscraper library to inherit 'verify' attribute from given Session object
+- Merge Sketch default date fix (#841) by byjtje
+
+20201024
+- add cmd logging when converting ugoira.
+- Implement #406: add option 13: download by manga series
+  - Specific for filenameMangaFormat in Manga Series mode (option 13):
+    -> %manga_series_order%
+       the order in the manga series.
+    -> %manga_series_id%
+       original manga series id.
+    -> %manga_series_title%
+       original manga series title, different from work title.
+    -> %manga_series_desc%
+       original manga series description, different from work description.
+- Merge #806 fix for Fanbox EndPage input parameter (#808) by amatuerCoder.
+- Implement #812: handle different Sketch and Pixiv artist id.
+  - add new filename format `%sketch_member_id%` for PixivSketch
+- Fix Issue #822: Update parser for user's image bookmark.
+- Fix Issue #827: Update parser to NOT use AppAPI/oAuth to get member token.
+- Fix Issue #824: Update argument parser for option 6.
+- Add new configuration `checkLastModified` in `[DownloadControl]` for Issue #807
+  -  This will compare last-modified time with works date, require `setlastmodified = True` in config.ini to work properly.
+- Throw error if cannot get the user id during login, related to #831
+- Merge Adding Filename option for Sketch and fixing dates and Unix filenames (#836) by byjtje
+  - change default dateFormat to %Y-%m-%d (YYYY-MM-DD)
+- Fix Issue #838: delete zip/ugoira handling.
+- Add new start parameter:
+  - --start_date and --end_date for option 3, 7, and 9
+  - --tag_sort_order to set sorting order for option 3 and 7
+- Add check if ffmpeg exist or not if ugoira conversion is enabled.
+- Implement #837: add new config to skip downloading if `alwaysCheckFileSize = True` and remote file size is unknown => skipUnknownSize.
+- Update #814: replace requests with cloudscrapper for oAuth handling.
+- Implement #834: additional tag sorting order for premium users.
+  - order=popular_d (overall), popular_male_d (popular among male users) and popular_female_d.
+- Merge Fix error in PixivHelper.py:173 - TypeError expects String, not Int (#832) by Jared Shields.
+- update test cases and libraries.
+
+20201006
+- Implement #797: reload blacklist on after reloading main menu.
+- Implement #793: allow to download sketch when using option 1.
+- Update #796: change apng converter to use ffmpeg.
+- Fix Issue #795: handle no avatar/bg.
+- Implement #802: use ffmpeg for converting to gif.
+- Merge Implemented #804 download FANBOX from list file (#805) by amatuerCoder
+  - Added new option `listPathFanbox`
+- IMPORTANT: changes the command line parameters, run with --help for more details
+- Update readme.md
+
+20200915
+- Fix Issue #778: "'list' object has no attribute 'startswith'" process_tags_list().
+- Update #777: add s_tag and date_d param value
+- Fix Issue #772: Pixiv Sketch tz_info
+- Update #768: enhance the error message
+- Implement #726: file extension filter for batch job
+- Merge: Disable blacklist for the download by image id option (#791) by byjtje.
+- Merge: Update PixivBrowserFactory.py (#790) by amatuerCoder.
+- Merge: Fixed avatar/background default file extension and background urlfilename (#789) by byjtje.
+- Implement #782: add filename in the warning message.
+- Merge: Removed unneccessary check from check_version and made the browser opening opt-in (#779) by byjtje.
+
+20200824
+- Implement #650: open default browser to release page if checkNewVersion=True in config.ini
+- Merge: Add run on repl.it badge to README (#770) by cyleja1234
+- Merge: Added date update for artists with no pictures (#766) by byjtje
+- Merge: Switched the check from last image to last downloaded to avoid always checking when it doesn't download any images (#764) by byjtje
+- Merge: Minor changes to PixivFanboxHandler, PixivUtil2, readme (#763) by amatuerCoder
+- Merge: Regex Title Filtering + Date updates and a few minor changes (#759) by byjtje
+- Merge: Update readme.md (#754) by amatuerCoder
+- Merge: proper checkUpdatedLimit check  (#753) by byjtje
+- Implement #749: Pixiv Sketch support.
+
+20200726
+- Update #592: dns over socks proxy handling.
+- Merge: Fix shebang of PixivUtil2.py (#739) by RoestVrijStaal
+- Merge: Dockerfile (#740) by DenDen047
+- Merge: Fixed handle tags (#741) by byjtje
+- Fix Issue #743: add error message in config item, add colorama.
+- Implement #718: add ffmpegExt in config.ini to control the file extension.
+- Merge: Update Fanbox Handling (#746) by amatuerCoder
+- Refactor process FANBOX to PixivFanboxHandler
+- Add update check for refresh_token for writing config.ini 
+- Merge: Update PixivFanboxHandler.py (#747) by amatuerCoder
+
 20200712
 - Merge Added a filter for Titles and added a condition to prevent unnecessary blacklist checks (#737) by byjtje.
 - Implement #716: include soundcloud provider support.

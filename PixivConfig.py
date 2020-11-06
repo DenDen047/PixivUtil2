@@ -7,6 +7,8 @@ import shutil
 import sys
 import time
 
+from colorama import Fore, Style
+
 import PixivHelper
 
 script_path = PixivHelper.module_path()
@@ -18,20 +20,25 @@ class ConfigItem():
     default = None
     restriction = None
     followup = None
+    error_message = None
 
-    def __init__(self, section, option, default, *, followup=None, restriction=None):
+    def __init__(self, section, option, default, *, followup=None, restriction=None, error_message=None):
         self.section = section
         self.option = option
         self.default = default
         self.followup = followup
         self.restriction = restriction
+        self.error_message = error_message
 
     def process_value(self, value):
         return_value = value
         if self.restriction:
             result = self.restriction(value)
             if not result:
-                raise ValueError("Illegal value for", self.option, ":", value)
+                if self.error_message is not None:
+                    raise ValueError(f"{self.error_message} {self.option}: [{value}]")
+                else:
+                    raise ValueError(f"Illegal value for {self.option}: [{value}]")
         if self.followup:
             return_value = self.followup(value)
         return return_value
@@ -53,6 +60,7 @@ class PixivConfig():
         ConfigItem("Network", "retryWait", 5),
         ConfigItem("Network", "downloadDelay", 2),
         ConfigItem("Network", "checkNewVersion", True),
+        ConfigItem("Network", "openNewVersion", True),
         ConfigItem("Network", "enableSSLVerification", True),
 
         ConfigItem("Debug", "logLevel", "DEBUG",
@@ -79,6 +87,9 @@ class PixivConfig():
         ConfigItem("Settings", "tagsLimit", -1),
         ConfigItem("Settings", "writeImageInfo", False),
         ConfigItem("Settings", "writeImageJSON", False),
+        ConfigItem("Settings", "writeRawJSON", False),
+        ConfigItem("Settings", "RawJSONFilter", "id,title,description,alt,userIllusts,storableTags,zoneConfig,extraData,comicPromotion,fanboxPromotion"),
+        ConfigItem("Settings", "includeSeriesJSON", False),
         ConfigItem("Settings", "verifyImage", False),
         ConfigItem("Settings", "writeUrlInDescription", False),
         ConfigItem("Settings", "urlBlacklistRegex", ""),
@@ -93,14 +104,21 @@ class PixivConfig():
         ConfigItem("Filename",
                    "filenameMangaFormat",
                    "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
-                   restriction=lambda x: x is not None and len(x) > 0 and (x.find("%urlFilename%") >= 0 or (x.find('%page_index%') >= 0 or x.find('%page_number%') >= 0))),
+                   restriction=lambda x: x is not None and len(x) > 0 and (x.find("%urlFilename%") >= 0 or (x.find('%page_index%') >= 0 or x.find('%page_number%') >= 0)),
+                   error_message="At least %urlFilename%, %page_index%, or %page_number% is required in"),
         ConfigItem("Filename", "filenameInfoFormat",
                    "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
                    restriction=lambda x: x is not None and len(x) > 0),
         ConfigItem("Filename", "filenameMangaInfoFormat",
                    "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
                    restriction=lambda x: x is not None and len(x) > 0),
+        ConfigItem("Filename", "filenameSeriesJSON",
+                   "%artist% (%member_id%)" + os.sep + "%manga_series_id% - %manga_series_title%",
+                   restriction=lambda x: x is not None and len(x) > 0),
+        ConfigItem("Filename", "filenameFormatSketch", "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
+                   restriction=lambda x: x is not None and len(x) > 0),
         ConfigItem("Filename", "avatarNameFormat", ""),
+        ConfigItem("Filename", "backgroundNameFormat", ""),
         ConfigItem("Filename", "tagsSeparator", ", "),
         ConfigItem("Filename", "createMangaDir", False),
         ConfigItem("Filename", "useTagsAsDir", False),
@@ -124,7 +142,8 @@ class PixivConfig():
                    restriction=lambda x: x is not None and len(x) > 0),
         ConfigItem("FANBOX", "filenameFormatFanboxContent",
                    "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
-                   restriction=lambda x: x is not None and len(x) > 0 and (x.find("%urlFilename%") >= 0 or (x.find('%page_index%') >= 0 or x.find('%page_number%') >= 0))),
+                   restriction=lambda x: x is not None and len(x) > 0 and (x.find("%urlFilename%") >= 0 or (x.find('%page_index%') >= 0 or x.find('%page_number%') >= 0)),
+                   error_message="At least %urlFilename%, %page_index%, or %page_number% is required in"),
         ConfigItem("FANBOX", "filenameFormatFanboxInfo",
                    "%artist% (%member_id%)" + os.sep + "%urlFilename% - %title%",
                    restriction=lambda x: x is not None and len(x) > 0),
@@ -134,9 +153,11 @@ class PixivConfig():
         ConfigItem("FANBOX", "useAbsolutePathsInHtml", False),
         ConfigItem("FANBOX", "downloadCoverWhenRestricted", False),
         ConfigItem("FANBOX", "checkDBProcessHistory", False),
+        ConfigItem("FANBOX", "listPathFanbox", "listfanbox.txt"),
 
         ConfigItem("FFmpeg", "ffmpeg", "ffmpeg"),
         ConfigItem("FFmpeg", "ffmpegCodec", "libvpx-vp9"),
+        ConfigItem("FFmpeg", "ffmpegExt", "webm"),
         ConfigItem("FFmpeg", "ffmpegParam", "-lossless 1 -vsync 2 -r 999 -pix_fmt yuv420p"),
         ConfigItem("FFmpeg", "webpCodec", "libwebp"),
         ConfigItem("FFmpeg", "webpParam", "-lossless 0 -q:v 90 -loop 0 -vsync 2 -r 999"),
@@ -159,10 +180,13 @@ class PixivConfig():
         ConfigItem("DownloadControl", "checkUpdatedLimit", 0),
         ConfigItem("DownloadControl", "useBlacklistTags", False),
         ConfigItem("DownloadControl", "useBlacklistTitles", False),
+        ConfigItem("DownloadControl", "useBlacklistTitlesRegex", False),
         ConfigItem("DownloadControl", "dateDiff", 0),
         ConfigItem("DownloadControl", "enableInfiniteLoop", False),
         ConfigItem("DownloadControl", "useBlacklistMembers", False),
         ConfigItem("DownloadControl", "downloadResized", False),
+        ConfigItem("DownloadControl", "checkLastModified", True),
+        ConfigItem("DownloadControl", "skipUnknownSize", False),
     ]
 
     proxy = {"http": "", "https": "", }
@@ -220,16 +244,27 @@ class PixivConfig():
                 print(item.option, "=", item.default)
                 value = item.default
                 haveError = True
-            value = item.process_value(value)
+
+            # Issue #743
+            try:
+                value = item.process_value(value)
+            except ValueError:
+                print(Fore.RED + Style.BRIGHT + f"{sys.exc_info()}" + Style.RESET_ALL)
+                self.__logger.exception('Error at process_value() of : %s', item.option)
+                print(Fore.YELLOW + Style.BRIGHT + f"{item.option} = {item.default}" + Style.RESET_ALL)
+                value = item.default
+                haveError = True
+
+            # assign the value to the actual configuration attribute
             self.__setattr__(item.option, value)
 
         self.proxy = {'http': self.proxyAddress, 'https': self.proxyAddress}
 
         if haveError:
-            print('Configurations with invalid value are set to default value.')
+            print(Fore.RED + Style.BRIGHT + 'Configurations with invalid value are set to default value.' + Style.RESET_ALL)
             self.writeConfig(error=True, path=self.configFileLocation)
 
-        print('done.')
+        print('Configuration loaded.')
 
     # -UI01B------write config
     def writeConfig(self, error=False, path=None):
@@ -269,7 +304,7 @@ class PixivConfig():
             self.__logger.exception('Error at writeConfig()')
             raise
 
-        print('done.')
+        print('Configuration saved.')
 
     def printConfig(self):
         print('Configuration: ')

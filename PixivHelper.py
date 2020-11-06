@@ -19,30 +19,40 @@ import time
 import traceback
 import unicodedata
 import urllib
+import urllib.parse
+import webbrowser
 import zipfile
 from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
+from typing import Union
 
-import imageio
 import mechanize
-from apng import APNG
+from colorama import Fore, Style
 
 import PixivConstant
+from PixivArtist import PixivArtist
 from PixivImage import PixivImage
+from PixivModelFanbox import FanboxArtist, FanboxPost
 
 logger = None
 _config = None
 __re_manga_index = re.compile(r'_p(\d+)')
-__badchars__ = re.compile(r'''
-^$
-|\?
-|:
-|<
-|>
-|\|
-|\*
-|\"
-''', re.VERBOSE)
+__badchars__ = None
+if platform.system() == 'Windows':
+    __badchars__ = re.compile(r'''
+    ^$
+    |\?
+    |:
+    |<
+    |>
+    |\|
+    |\*
+    |\"
+    ''', re.VERBOSE)
+else:
+    __badchars__ = re.compile(r'''
+    ^$
+    ''', re.VERBOSE)
 
 
 def set_config(config):
@@ -129,14 +139,22 @@ def sanitize_filename(name, rootDir=None):
     return name
 
 
-# Issue #277: always replace '/' and '\' with '_' for %artist%, %title%, %searchTags%, %tags%, %works_tools%, and %original_artist%.
+# Issue #277: always replace '/' and '\' with '_' for %artist%, %title%, %searchTags%, %tags%, and %original_artist%.
 def replace_path_separator(s, replacement='_'):
     return s.replace('/', replacement).replace('\\', replacement)
 
 
-def make_filename(nameFormat, imageInfo, artistInfo=None, tagsSeparator=' ', tagsLimit=-1, fileUrl='',
-                  appendExtension=True, bookmark=False, searchTags='',
-                  useTranslatedTag=False, tagTranslationLocale="en"):
+def make_filename(nameFormat: str,
+                  imageInfo: Union[PixivImage, FanboxPost],
+                  artistInfo: Union[PixivArtist, FanboxArtist] = None,
+                  tagsSeparator=' ',
+                  tagsLimit=-1,
+                  fileUrl='',
+                  appendExtension=True,
+                  bookmark=False,
+                  searchTags='',
+                  useTranslatedTag=False,
+                  tagTranslationLocale="en") -> str:
     '''Build the filename from given info to the given format.'''
     if artistInfo is None:
         artistInfo = imageInfo.artist
@@ -156,6 +174,10 @@ def make_filename(nameFormat, imageInfo, artistInfo=None, tagsSeparator=' ', tag
     nameFormat = nameFormat.replace('%member_id%', str(artistInfo.artistId))
     nameFormat = nameFormat.replace('%member_token%', artistInfo.artistToken)
 
+    # sketch related
+    if hasattr(artistInfo, "sketchArtistId"):
+        nameFormat = nameFormat.replace('%sketch_member_id%', str(artistInfo.sketchArtistId))
+
     # image related
     nameFormat = nameFormat.replace('%title%', replace_path_separator(imageInfo.imageTitle))
     nameFormat = nameFormat.replace('%image_id%', str(imageInfo.imageId))
@@ -169,7 +191,6 @@ def make_filename(nameFormat, imageInfo, artistInfo=None, tagsSeparator=' ', tag
         nameFormat = nameFormat.replace(to_replace[0], imageInfo.worksDateDateTime.strftime(date_format[0]))
 
     nameFormat = nameFormat.replace('%works_res%', imageInfo.worksResolution)
-    nameFormat = nameFormat.replace('%works_tools%', replace_path_separator(imageInfo.worksTools))
     nameFormat = nameFormat.replace('%urlFilename%', imageFile)
     nameFormat = nameFormat.replace('%searchTags%', replace_path_separator(searchTags))
 
@@ -199,6 +220,16 @@ def make_filename(nameFormat, imageInfo, artistInfo=None, tagsSeparator=' ', tag
     nameFormat = nameFormat.replace('%page_big%', page_big)
     nameFormat = nameFormat.replace('%page_index%', page_index)
     nameFormat = nameFormat.replace('%page_number%', page_number)
+
+    # Manga Series related
+    if hasattr(imageInfo, "seriesNavData") and imageInfo.seriesNavData:
+        nameFormat = nameFormat.replace('%manga_series_order%', str(imageInfo.seriesNavData['order']))
+        nameFormat = nameFormat.replace('%manga_series_id%', str(imageInfo.seriesNavData['seriesId']))
+        nameFormat = nameFormat.replace('%manga_series_title%', imageInfo.seriesNavData['title'])
+    else:
+        nameFormat = nameFormat.replace('%manga_series_order%', '')
+        nameFormat = nameFormat.replace('%manga_series_id%', '')
+        nameFormat = nameFormat.replace('%manga_series_title%', '')
 
     if tagsSeparator == '%space%':
         tagsSeparator = ' '
@@ -263,7 +294,7 @@ def make_filename(nameFormat, imageInfo, artistInfo=None, tagsSeparator=' ', tag
 def safePrint(msg, newline=True, end=None):
     """Print empty string if UnicodeError raised."""
     if not isinstance(msg, str):
-        print(f"msg", end=' ')
+        print(f"{msg}", end=' ')
     for msgToken in msg.split(' '):
         try:
             print(msgToken, end=' ')
@@ -277,14 +308,17 @@ def safePrint(msg, newline=True, end=None):
 
 
 def set_console_title(title):
-    if os.name == 'nt':
-        subprocess.call('title' + ' ' + title, shell=True)
+    if platform.system() == "Windows":
+        try:
+            subprocess.call('title' + ' ' + title, shell=True)
+        except FileNotFoundError:
+            print_and_log("error", f"Cannot set console title to {title}")
     else:
-        sys.stdout.write("\x1b]2;" + title + "\x07")
+        sys.stdout.write(f"\x1b]2;{title}\x07")
 
 
 def clearScreen():
-    if os.name == 'nt':
+    if platform.system() == "Windows":
         subprocess.call('cls', shell=True)
     else:
         subprocess.call('clear', shell=True)
@@ -338,38 +372,70 @@ def open_text_file(filename, mode='r', encoding='utf-8'):
     return f
 
 
-def create_avatar_filename(artistPage, targetDir, format_src):
-    filename = ''
-    image = PixivImage(parent=artistPage)
-    # Download avatar using custom name, refer issue #174
-    if len(format_src.avatarNameFormat) > 0:
-        filenameFormat = format_src.avatarNameFormat
-        filename = make_filename(filenameFormat, image,
-                                 tagsSeparator=_config.tagsSeparator,
-                                 tagsLimit=_config.tagsLimit,
-                                 fileUrl=artistPage.artistAvatar,
-                                 appendExtension=True)
-        filename = sanitize_filename(filename, targetDir)
-    else:
-        # or as folder.jpg
-        filenameFormat = format_src.filenameFormat
-        if filenameFormat.find(os.sep) == -1:
-            filenameFormat = os.sep + filenameFormat
-        filenameFormat = os.sep.join(filenameFormat.split(os.sep)[:-1])
-        filename = make_filename(filenameFormat, image,
-                                 tagsSeparator=_config.tagsSeparator,
-                                 tagsLimit=_config.tagsLimit,
-                                 fileUrl=artistPage.artistAvatar,
-                                 appendExtension=False)
-        filename = sanitize_filename(filename + os.sep + 'folder.jpg', targetDir)
-    return filename
+def create_avabg_filename(artistModel, targetDir, format_src):
+    filename_avatar = ""
+    filename_bg = ""
 
+    image = PixivImage(parent=artistModel)
 
-def create_bg_filename_from_avatar_filename(avatarFilename):
-    filenames = avatarFilename.split(os.sep)
-    filenames[-1] = "bg_" + filenames[-1]
-    filename = os.sep.join(filenames)
-    return filename
+    # Issue #795
+    if artistModel.artistAvatar.find('no_profile') == -1:
+        # Download avatar using custom name, refer issue #174
+        if format_src.avatarNameFormat != "":
+            tmpfilename = make_filename(format_src.avatarNameFormat,
+                                        image,
+                                        tagsSeparator=_config.tagsSeparator,
+                                        tagsLimit=_config.tagsLimit,
+                                        fileUrl=artistModel.artistAvatar,
+                                        appendExtension=True)
+            filename_avatar = sanitize_filename(tmpfilename, targetDir)
+        else:
+            filenameFormat = format_src.filenameFormat
+            if filenameFormat.find(os.sep) == -1:
+                filenameFormat = os.sep + filenameFormat
+            filenameFormat = os.sep.join(filenameFormat.split(os.sep)[:-1])
+            tmpfilename = make_filename(filenameFormat,
+                                        image,
+                                        tagsSeparator=_config.tagsSeparator,
+                                        tagsLimit=_config.tagsLimit,
+                                        fileUrl=artistModel.artistAvatar,
+                                        appendExtension=False)
+            filename_avatar = sanitize_filename(tmpfilename + os.sep + 'folder.' + artistModel.artistAvatar.rsplit(".", 1)[1], targetDir)
+
+    if artistModel.artistBackground is not None and artistModel.artistBackground.startswith("http"):
+        if format_src.backgroundNameFormat != "" and format_src.avatarNameFormat != format_src.backgroundNameFormat:
+            tmpfilename = make_filename(format_src.backgroundNameFormat,
+                                        image,
+                                        tagsSeparator=_config.tagsSeparator,
+                                        tagsLimit=_config.tagsLimit,
+                                        fileUrl=artistModel.artistBackground,
+                                        appendExtension=True)
+            filename_bg = sanitize_filename(tmpfilename, targetDir)
+        else:
+            if format_src.avatarNameFormat != "":
+                tmpfilename = make_filename(format_src.avatarNameFormat,
+                                            image,
+                                            tagsSeparator=_config.tagsSeparator,
+                                            tagsLimit=_config.tagsLimit,
+                                            fileUrl=artistModel.artistBackground,
+                                            appendExtension=True)
+                tmpfilename = tmpfilename.split(os.sep)
+                tmpfilename[-1] = "bg_" + tmpfilename[-1]
+                filename_bg = sanitize_filename(os.sep.join(tmpfilename), targetDir)
+            else:
+                filenameFormat = format_src.filenameFormat
+                if filenameFormat.find(os.sep) == -1:
+                    filenameFormat = os.sep + filenameFormat
+                filenameFormat = os.sep.join(filenameFormat.split(os.sep)[:-1])
+                tmpfilename = make_filename(filenameFormat,
+                                            image,
+                                            tagsSeparator=_config.tagsSeparator,
+                                            tagsLimit=_config.tagsLimit,
+                                            fileUrl=artistModel.artistBackground,
+                                            appendExtension=False)
+                filename_bg = sanitize_filename(tmpfilename + os.sep + 'bg_folder.' + artistModel.artistBackground.rsplit(".", 1)[1], targetDir)
+
+    return (filename_avatar, filename_bg)
 
 
 def we_are_frozen():
@@ -459,19 +525,21 @@ def print_and_log(level, msg, exception=None, newline=True, end=None):
     if level == 'debug':
         get_logger().debug(msg)
     else:
-        safePrint(msg, newline, end)
         if level == 'info':
+            safePrint(msg, newline, end)
             get_logger().info(msg)
         elif level == 'warn':
+            safePrint(Fore.YELLOW + f"{msg}" + Style.RESET_ALL, newline, end)
             get_logger().warning(msg)
         elif level == 'error':
+            safePrint(Fore.RED + f"{msg}" + Style.RESET_ALL, newline, end)
             if exception is None:
                 get_logger().error(msg)
             else:
                 get_logger().error(msg, exception)
             get_logger().error(traceback.format_exc())
         elif level is None:
-            pass
+            safePrint(msg, newline, end)
 
 
 def have_strings(page, strings):
@@ -484,14 +552,16 @@ def have_strings(page, strings):
     return False
 
 
-def get_ids_from_csv(ids_str, sep=','):
+def get_ids_from_csv(ids_str, sep=',', is_string=False):
     ids = list()
     ids_str = str(ids_str).split(sep)
     for id_str in ids_str:
         temp = id_str.strip()
         if len(temp) > 0:
             try:
-                _id = int(temp)
+                _id = temp
+                if not is_string:
+                    _id = int(temp)
                 ids.append(_id)
             except ValueError:
                 print_and_log('error', u"ID: {0} is not valid".format(id_str))
@@ -545,22 +615,18 @@ def get_ugoira_size(ugoName):
 
 def check_file_exists(overwrite, filename, file_size, old_size, backup_old_file):
     if not overwrite and int(file_size) == old_size:
-        print_and_log('info', u"\tFile exist! (Identical Size)")
+        print_and_log('warn', f"\tFile exist! (Identical Size) ==> {filename}.")
         return PixivConstant.PIXIVUTIL_SKIP_DUPLICATE
-    # elif int(file_size) < old_size:
-    #    printAndLog('info', "\tFile exist! (Local is larger)")
-    #    return PixivConstant.PIXIVUTIL_SKIP_LOCAL_LARGER
     else:
         if backup_old_file:
             split_name = filename.rsplit(".", 1)
             new_name = filename + "." + str(int(time.time()))
             if len(split_name) == 2:
                 new_name = split_name[0] + "." + str(int(time.time())) + "." + split_name[1]
-            print_and_log('info', u"\t Found file with different file size, backing up to: " + new_name)
+            print_and_log('warn', f"\t Found file with different file size ==> {filename}, backing up to: {new_name}.")
             os.rename(filename, new_name)
         else:
-            print_and_log('info', u"\tFound file with different file size, removing old file (old: {0} vs new: {1})"
-                          .format(old_size, file_size))
+            print_and_log('warn', f"\tFound file with different file size ==> {filename}, removing old file (old: {old_size} vs new: {file_size})")
             os.remove(filename)
         return PixivConstant.PIXIVUTIL_OK
 
@@ -671,17 +737,23 @@ def download_image(url, filename, res, file_size, overwrite):
 
 def print_progress(curr, total, max_msg_length=80):
     # [12345678901234567890]
-    # [||||||||------------]
+    # [████████------------]
     animBarLen = 20
 
     if total > 0:
         complete = int((curr * animBarLen) / total)
-        msg = f"\r[{'|' * complete:{animBarLen}}] {size_in_str(curr)} of {size_in_str(total)}"
+        remainder = (((curr * animBarLen) % total) / total)
+        use_half_block = (remainder <= 0.5) and remainder > 0.1
+        if use_half_block:
+            with_half_block = f"{'█' * (complete - 1)}▌"
+            msg = f"\r[{with_half_block:{animBarLen}}] {size_in_str(curr)} of {size_in_str(total)}"
+        else:
+            msg = f"\r[{'█' * complete:{animBarLen}}] {size_in_str(curr)} of {size_in_str(total)}"
 
     else:
         # indeterminite
-        pos = curr % (animBarLen + 3)  # 3 corresponds to the length of the '|||' below
-        anim = '.' * animBarLen + '|||' + '.' * animBarLen
+        pos = curr % (animBarLen + 3)  # 3 corresponds to the length of the '███' below
+        anim = '.' * animBarLen + '███' + '.' * animBarLen
         # Use nested replacement field to specify the precision value. This limits the maximum print
         # length of the progress bar. As pos changes, the starting print position of the anim string
         # also changes, thus producing the scrolling effect.
@@ -693,22 +765,30 @@ def print_progress(curr, total, max_msg_length=80):
     return curr_msg_length if curr_msg_length > max_msg_length else max_msg_length
 
 
-def generate_search_tag_url(tags, page, title_caption, wild_card, oldest_first,
-                            start_date=None, end_date=None, member_id=None,
-                            r18mode=False, blt=0, type_data="a"):
+def generate_search_tag_url(tags,
+                            page,
+                            title_caption=False,
+                            wild_card=False,
+                            sort_order='date_d',
+                            start_date=None,
+                            end_date=None,
+                            member_id=None,
+                            r18mode=False,
+                            blt=0,
+                            type_mode="a"):
     url = ""
     date_param = ""
     page_param = ""
 
     if start_date is not None:
-        date_param = date_param + "&scd=" + start_date
+        date_param = f"{date_param}&scd={start_date}"
     if end_date is not None:
-        date_param = date_param + "&ecd=" + end_date
+        date_param = f"{date_param}&ecd={end_date}"
     if page is not None and int(page) > 1:
-        page_param = "&p={0}".format(page)
+        page_param = f"&p={page}"
 
     if member_id is not None:
-        url = 'https://www.pixiv.net/member_illust.php?id=' + str(member_id) + '&tag=' + tags + '&p=' + str(page)
+        url = f'https://www.pixiv.net/member_illust.php?id={member_id}&tag={tags}&p={page}'
     else:
         root_url = 'https://www.pixiv.net/ajax/search/artworks'
         search_mode = ""
@@ -717,6 +797,7 @@ def generate_search_tag_url(tags, page, title_caption, wild_card, oldest_first,
             print_and_log(None, "Using Title Match (s_tc)")
         elif wild_card:
             # partial match
+            search_mode = '&s_mode=s_tag'
             print_and_log(None, "Using Partial Match (s_tag)")
         else:
             search_mode = '&s_mode=s_tag_full'
@@ -726,23 +807,22 @@ def generate_search_tag_url(tags, page, title_caption, wild_card, oldest_first,
         if blt is not None and blt > 0:
             bookmark_limit_premium = f'&blt={blt}'
 
-        if type_data == "i":
-            type_data = "illust_and_ugoira"
-        elif type_data == "m":
-            type_data = "manga"
+        if type_mode == "i":
+            type_mode = "illust_and_ugoira"
+        elif type_mode == "m":
+            type_mode = "manga"
         else:
-            type_data = "all"
-        type_mode = f"&type={type_data}"
+            type_mode = "all"
+        type_mode = f"&type={type_mode}"
 
+        # https://www.pixiv.net/ajax/search/artworks/k-on?word=k-on&order=date_d&mode=all&p=1&s_mode=s_tag_full&type=all&lang=en
         url = f"{root_url}/{tags}?word={tags}{date_param}{page_param}{search_mode}{bookmark_limit_premium}{type_mode}"
 
     if r18mode:
-        url = url + '&mode=r18'
+        url = f'{url}&mode=r18'
 
-    if oldest_first:
-        url = url + '&order=date'
-    # else:
-    #    url = url + '&order=date_d'
+    if sort_order in ('date', 'date_d', 'popular_d', 'popular_male_d', 'popular_female_d'):
+        url = f'{url}&order={sort_order}'
 
     # encode to ascii
     # url = url.encode('iso_8859_1')
@@ -775,80 +855,32 @@ def write_url_in_description(image, blacklistRegex, filenamePattern):
         info.close()
 
 
-def ugoira2gif(ugoira_file, exportname, delete_ugoira, fmt='gif', image=None):
+def ugoira2gif(ugoira_file, exportname, fmt='gif', image=None):
     print_and_log('info', 'processing ugoira to animated gif...')
-    temp_folder = tempfile.mkdtemp()
-    # imageio cannot handle utf-8 filename
-    temp_name = temp_folder + os.sep + "temp.gif"
-
-    with zipfile.ZipFile(ugoira_file) as f:
-        f.extractall(temp_folder)
-
-    filenames = os.listdir(temp_folder)
-    filenames.remove('animation.json')
-    anim_info = json.load(open(temp_folder + '/animation.json'))
-
-    durations = []
-    images = []
-    for info in anim_info["frames"]:
-        images.append(imageio.imread(temp_folder + os.sep + info["file"]))
-        durations.append(float(info["delay"]) / 1000)
-
-    kargs = {'duration': durations}
-    imageio.mimsave(temp_name, images, fmt, **kargs)
-    shutil.move(temp_name, exportname)
-    print_and_log('info', 'ugoira exported to: ' + exportname)
-
-    shutil.rmtree(temp_folder)
-    if delete_ugoira:
-        print_and_log('info', 'deleting ugoira {0}'.format(ugoira_file))
-        os.remove(ugoira_file)
-
-    # set last-modified and last-accessed timestamp
-    if image is not None and _config.setLastModified and exportname is not None and os.path.isfile(exportname):
-        ts = time.mktime(image.worksDateDateTime.timetuple())
-        os.utime(exportname, (ts, ts))
+    # Issue #802 use ffmpeg to convert to gif
+    ugoira2webm(ugoira_file,
+                exportname,
+                ffmpeg=_config.ffmpeg,
+                codec=None,
+                param="-filter_complex \"[0:v]split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle\"",
+                extension="gif",
+                image=image)
 
 
-def ugoira2apng(ugoira_file, exportname, delete_ugoira, image=None):
+def ugoira2apng(ugoira_file, exportname, image=None):
     print_and_log('info', 'processing ugoira to apng...')
-    temp_folder = tempfile.mkdtemp()
-    temp_name = temp_folder + os.sep + "temp.png"
-
-    with zipfile.ZipFile(ugoira_file) as f:
-        f.extractall(temp_folder)
-
-    filenames = os.listdir(temp_folder)
-    filenames.remove('animation.json')
-    anim_info = json.load(open(temp_folder + '/animation.json'))
-
-    files = []
-    for info in anim_info["frames"]:
-        fImage = temp_folder + os.sep + info["file"]
-        delay = info["delay"]
-        files.append((fImage, delay))
-
-    im = APNG()
-    for fImage, delay in files:
-        im.append_file(fImage, delay=delay)
-    im.save(temp_name)
-    shutil.move(temp_name, exportname)
-    print_and_log('info', 'ugoira exported to: ' + exportname)
-
-    shutil.rmtree(temp_folder)
-    if delete_ugoira:
-        print_and_log('info', 'deleting ugoira {0}'.format(ugoira_file))
-        os.remove(ugoira_file)
-
-    # set last-modified and last-accessed timestamp
-    if image is not None and _config.setLastModified and exportname is not None and os.path.isfile(exportname):
-        ts = time.mktime(image.worksDateDateTime.timetuple())
-        os.utime(exportname, (ts, ts))
+    # fix #796 convert apng using ffmpeg
+    ugoira2webm(ugoira_file,
+                exportname,
+                ffmpeg=_config.ffmpeg,
+                codec="apng",
+                param="-vf \"setpts=PTS-STARTPTS,hqdn3d=1.5:1.5:6:6\" -plays 0",
+                extension="apng",
+                image=image)
 
 
 def ugoira2webm(ugoira_file,
                 exportname,
-                delete_ugoira,
                 ffmpeg=u"ffmpeg",
                 codec="libvpx-vp9",
                 param="-lossless 1 -vsync 2 -r 999 -pix_fmt yuv420p",
@@ -858,15 +890,19 @@ def ugoira2webm(ugoira_file,
     d = tempfile.mkdtemp(prefix="ugoira2webm")
     d = d.replace(os.sep, '/')
 
+    if exportname is None or len(exportname) == 0:
+        name = '.'.join(ugoira_file.split('.')[:-1])
+        exportname = f"{os.path.basename(name)}.{extension}"
+
+    tempname = d + "/temp." + extension
+
+    cmd = f"{ffmpeg} -y -i \"{d}/i.ffconcat\" -c:v {codec} {param} \"{tempname}\""
+    if codec is None:
+        cmd = f"{ffmpeg} -y -i \"{d}/i.ffconcat\" {param} \"{tempname}\""
+
     try:
         frames = {}
         ffconcat = "ffconcat version 1.0\n"
-
-        if exportname is None or len(exportname) == 0:
-            name = '.'.join(ugoira_file.split('.')[:-1])
-            exportname = u"{0}.{1}".format(os.path.basename(name), extension)
-
-        tempname = d + "/temp." + extension
 
         with zipfile.ZipFile(ugoira_file) as f:
             f.extractall(d)
@@ -884,14 +920,13 @@ def ugoira2webm(ugoira_file,
         with open(d + "/i.ffconcat", "w") as f:
             f.write(ffconcat)
 
-        cmd = u"{0} -y -i \"{1}/i.ffconcat\" -c:v {2} {3} \"{4}\""
-        cmd = cmd.format(ffmpeg, d, codec, param, tempname)
         ffmpeg_args = shlex.split(cmd)
+        get_logger().info(f"[ugoira2webm()] running with cmd: {cmd}")
         p = subprocess.Popen(ffmpeg_args, stderr=subprocess.PIPE)
 
         # progress report
         chatter = ""
-        print_and_log('info', u"Start encoding {0}".format(exportname))
+        print_and_log('info', f"Start encoding {exportname}")
         while p.stderr:
             buff = p.stderr.readline().decode('utf-8').rstrip('\n')
             chatter += buff
@@ -905,16 +940,16 @@ def ugoira2webm(ugoira_file,
         ret = p.wait()
         shutil.move(tempname, exportname)
 
-        if delete_ugoira:
-            print_and_log('info', 'deleting ugoira {0}'.format(ugoira_file))
-            os.remove(ugoira_file)
-
         if ret is not None:
-            print_and_log(None, "done with status= {0}".format(ret))
+            print_and_log(None, f"- Done with status = {ret}")
+
         # set last-modified and last-accessed timestamp
         if image is not None and _config.setLastModified and exportname is not None and os.path.isfile(exportname):
             ts = time.mktime(image.worksDateDateTime.timetuple())
             os.utime(exportname, (ts, ts))
+    except FileNotFoundError:
+        print_and_log("error", f"Failed when converting, ffmpeg command used: {cmd}")
+        raise
 
     finally:
         shutil.rmtree(d)
@@ -971,10 +1006,14 @@ def check_version(br, config=None):
     latest_version_int = int(latest_version_full[0][0])
     curr_version_int = int(re.findall(r"(\d+)", PixivConstant.PIXIVUTIL_VERSION)[0])
     is_beta = True if latest_version_full[0][1].find("beta") >= 0 else False
-    if latest_version_int > curr_version_int and is_beta:
-        print_and_log("info", "New beta version available: {0}".format(latest_version_full[0]))
-    elif latest_version_int > curr_version_int:
-        print_and_log("info", "New version available: {0}".format(latest_version_full[0]))
+    url = "https://github.com/Nandaka/PixivUtil2/releases"
+    if latest_version_int > curr_version_int:
+        if is_beta:
+            print_and_log("info", "New beta version available: {0}".format(latest_version_full[0]))
+        else:
+            print_and_log("info", "New version available: {0}".format(latest_version_full[0]))
+        if config.openNewVersion:
+            webbrowser.open_new(url)
 
 
 def decode_tags(tags):
@@ -1019,7 +1058,7 @@ def get_start_and_end_date():
     return start_date, end_date
 
 
-def get_start_and_end_number(start_only=False, np_is_valid=False, np=0):
+def get_start_and_end_number(start_only=False, total_number_of_page=None):
     page_num = input('Start Page (default=1): ').rstrip("\r") or 1
     try:
         page_num = int(page_num)
@@ -1028,13 +1067,15 @@ def get_start_and_end_number(start_only=False, np_is_valid=False, np=0):
         raise
 
     end_page_num = 0
-    if np_is_valid:
-        end_page_num = np
+    if total_number_of_page is not None:
+        end_page_num = int(total_number_of_page)
     else:
+        if _config.numberOfPage > 0:
+            print_and_log(None, f"Using numberOfPage from config = {_config.numberOfPage} as default.")
         end_page_num = _config.numberOfPage
 
     if not start_only:
-        end_page_num = input('End Page (default=' + str(end_page_num) + ', 0 for no limit): ').rstrip("\r") or end_page_num
+        end_page_num = input(f'End Page (default= {end_page_num}, 0 for no limit): ').rstrip("\r") or end_page_num
         if end_page_num is not None:
             try:
                 end_page_num = int(end_page_num)
@@ -1061,6 +1102,12 @@ def wait(result=None, config=None):
 
 def dummy_notifier(type=None, message=None, **kwargs):
     pass
+
+
+def get_extension_from_url(url):
+    o = urllib.parse.urlparse(url, scheme='', allow_fragments=True)
+    ext = os.path.splitext(o.path)
+    return ext[1]
 
 
 # Issue 420

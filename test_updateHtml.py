@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import getpass
+
 import mechanize
 
 import PixivBrowserFactory
 import PixivConfig
-from PixivOAuth import PixivOAuth
+import PixivConstant
+
+PixivConstant.PIXIVUTIL_LOG_FILE = 'pixivutil.test.log'
 
 __config__ = PixivConfig.PixivConfig()
 __config__.loadConfig()
@@ -29,11 +32,6 @@ def prepare():
     if not result:
         result = __br__.login(username, password)
 
-    __br__._oauth_manager = PixivOAuth(username,
-                                       password,
-                                       proxies=None,
-                                       refresh_token=__config__.refresh_token,
-                                       validate_ssl=__config__.enableSSLVerification)
     __br__._oauth_manager.login()
 
     return result
@@ -76,6 +74,9 @@ def main():
     result = prepare()
     print(result)
     if result:
+        downloadPage('https://www.pixiv.net/ajax/user/14095911/profile/all', './test/all-14095911.json')
+        downloadMemberIdUsingOauth(14095911, './test/userdetail-14095911.json')
+
         # ./test/test-image-manga.htm
         # https://www.pixiv.net/member_illust.php?mode=medium&illust_id=28820443
         downloadPage('https://www.pixiv.net/member_illust.php?mode=medium&illust_id=28820443', './test/test-image-manga.htm')
@@ -151,7 +152,9 @@ def main():
         # ./test/test-member-nologin.htm
 
         # last page related
-        downloadPage('https://www.pixiv.net/ajax/search/artworks/%E5%88%9D%E6%98%A5%E9%A3%BE%E5%88%A9?s_mode=s_tag_full&order=date_d&p=48&word=%E5%88%9D%E6%98%A5%E9%A3%BE%E5%88%A9', './test/test-tags-search-exact-last.json')
+        import test_PixivModel
+        last_page = test_PixivModel.last_page
+        downloadPage(f'https://www.pixiv.net/ajax/search/artworks/%E5%88%9D%E6%98%A5%E9%A3%BE%E5%88%A9?s_mode=s_tag_full&order=date_d&p={last_page}&word=%E5%88%9D%E6%98%A5%E9%A3%BE%E5%88%A9', './test/test-tags-search-exact-last.json')
         downloadPage('https://www.pixiv.net/ajax/user/14095911/illustmanga/tag?tag=R-18&offset=96&limit=48', './test/tag-R-18-14095911-lastpage.json')
 
         print("Completed")

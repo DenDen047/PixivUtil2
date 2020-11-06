@@ -23,6 +23,7 @@ class FanboxArtist(object):
 
     SUPPORTING = 0
     FOLLOWING = 1
+    CUSTOM = 2
 
     @classmethod
     def parseArtistIds(cls, page):
@@ -168,13 +169,11 @@ class FanboxPost(object):
 
         # Issue #420
         if self._tzInfo is not None:
-            self.worksDateDateTime = self.worksDateDateTime.astimezone(
-                self._tzInfo)
+            self.worksDateDateTime = self.worksDateDateTime.astimezone(self._tzInfo)
 
         self.type = jsPost["type"]
         if self.type not in FanboxPost._supportedType:
-            raise PixivException("Unsupported post type = {0} for post = {1}".format(
-                self.type, self.imageId), errorCode=9999, htmlPage=jsPost)
+            raise PixivException(f"Unsupported post type = {self.type} for post = {self.imageId}", errorCode=9999, htmlPage=jsPost)
 
         self.likeCount = int(jsPost["likeCount"])
         if jsPost["body"] is None:
@@ -414,9 +413,7 @@ class FanboxPost(object):
                 try:
                     v = os.path.relpath(v, html_dir)
                 except ValueError:
-                    PixivHelper.get_logger() \
-                        .exception("Error when converting local paths to relative ones, absolute paths are used",
-                                   filename, self.imageId)
+                    PixivHelper.get_logger().exception("Error when converting local paths to relative ones, absolute paths are used", filename, self.imageId)
                     v = "file://" + v
             else:
                 v = "file://" + v

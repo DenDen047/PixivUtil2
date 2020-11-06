@@ -25,8 +25,10 @@ class PixivArtist:
     offset = None
     limit = None
     reference_image_id = 0
+    manga_series = []
+    novel_series = []
 
-    def __init__(self, mid=0, page=None, fromImage=False, offset=None, limit=None):
+    def __init__(self, mid: int = 0, page: str = None, fromImage=False, offset: int = None, limit: int = None):
         self.offset = offset
         self.limit = limit
         self.artistId = mid
@@ -42,15 +44,28 @@ class PixivArtist:
                     raise PixivException("Missing body content, possible artist id doesn't exists.",
                                          errorCode=PixivException.USER_ID_NOT_EXISTS, htmlPage=page)
                 self.ParseImages(payload["body"])
+                self.ParseMangaList(payload["body"])
+                self.ParseNovelList(payload["body"])
             else:
-                payload = parseJs(page)
+                payload = self.parseJs(page)
                 self.isLastPage = True
                 self.haveImages = True
 
             # parse artist info
             self.ParseInfo(payload, fromImage)
 
+    def ParseMangaList(self, payload):
+        if payload is not None and "mangaSeries" in payload:
+            for manga_series_id in payload["mangaSeries"]:
+                self.manga_series.append(int(manga_series_id["id"]))
+
+    def ParseNovelList(self, payload):
+        if payload is not None and "novelSeries" in payload:
+            for novel_series_id in payload["novelSeries"]:
+                self.novel_series.append(int(novel_series_id["id"]))
+
     def ParseInfo(self, page, fromImage=False, bookmark=False):
+        ''' parse artistId, artistAvatar, artistToken, artistName, and artistBackground '''
         self.artistId = 0
         self.artistAvatar = "no_profile"
         self.artistToken = "self"
@@ -62,7 +77,6 @@ class PixivArtist:
                 self.ParseInfoFromImage(page)
             else:
                 # used in PixivBrowserFactory.getMemberInfoWhitecube()
-
                 # webrpc method
                 if "body" in page and "illust" in page["body"] and page["body"]["illust"]:
                     root = page["body"]["illust"]
@@ -74,28 +88,31 @@ class PixivArtist:
                     self.artistId = root["user_id"]
                     self.artistToken = root["user_account"]
                     self.artistName = root["user_name"]
+                else:
+                    # https://app-api.pixiv.net/v1/user/detail?user_id=1039353
+                    data = None
+                    if "user" in page:
+                        data = page
+                    elif "illusts" in page and len(page["illusts"]) > 0:
+                        data = page["illusts"][0]
 
-                # https://app-api.pixiv.net/v1/user/detail?user_id=1039353
-                data = None
-                if "user" in page:
-                    data = page
-                elif "illusts" in page and len(page["illusts"]) > 0:
-                    data = page["illusts"][0]
+                    if data is not None:
+                        self.artistId = data["user"]["id"]
+                        self.artistToken = data["user"]["account"]
+                        self.artistName = data["user"]["name"]
 
-                if data is not None:
-                    self.artistId = data["user"]["id"]
-                    self.artistToken = data["user"]["account"]
-                    self.artistName = data["user"]["name"]
+                        avatar_data = data["user"]["profile_image_urls"]
+                        if avatar_data is not None and "medium" in avatar_data:
+                            self.artistAvatar = avatar_data["medium"].replace("_170", "")
 
-                    avatar_data = data["user"]["profile_image_urls"]
-                    if avatar_data is not None and "medium" in avatar_data:
-                        self.artistAvatar = avatar_data["medium"].replace("_170", "")
-
-                if "profile" in page and self.totalImages == 0:
-                    if bookmark:
-                        self.totalImages = int(page["profile"]["total_illust_bookmarks_public"])
-                    else:
-                        self.totalImages = int(page["profile"]["total_illusts"]) + int(page["profile"]["total_manga"])
+                if "profile" in page:
+                    if self.totalImages == 0:
+                        if bookmark:
+                            self.totalImages = int(page["profile"]["total_illust_bookmarks_public"])
+                        else:
+                            self.totalImages = int(page["profile"]["total_illusts"]) + int(page["profile"]["total_manga"])
+                    if "background_image_url" in page["profile"] and page["profile"]["background_image_url"] is not None and page["profile"]["background_image_url"].startswith("http"):
+                        self.artistBackground = page["profile"]["background_image_url"]
 
     def ParseInfoFromImage(self, page):
         key = list(page["user"].keys())[0]
@@ -116,7 +133,7 @@ class PixivArtist:
                 break
 
     def ParseBackground(self, payload):
-        self.artistBackground = "no_background"
+        # self.artistBackground = "no_background"
 
         # https://www.pixiv.net/ajax/user/8021957
         if "body" in payload:
@@ -180,17 +197,17 @@ class PixivArtist:
         PixivHelper.safePrint('total : {0}'.format(self.totalImages))
         PixivHelper.safePrint('last? : {0}'.format(self.isLastPage))
 
+    def parseJs(self, page):
+        ''' get the <meta> tag for attribute meta-preload-data and return json object'''
+        parsed = BeautifulSoup(page, features="html5lib")
+        jss = parsed.find('meta', attrs={'id': 'meta-preload-data'})
 
-def parseJs(page):
-    parsed = BeautifulSoup(page, features="html5lib")
-    jss = parsed.find('meta', attrs={'id': 'meta-preload-data'})
+        # cleanup
+        parsed.decompose()
+        del parsed
 
-    # cleanup
-    parsed.decompose()
-    del parsed
+        if jss is None or len(jss["content"]) == 0:
+            return None  # Possibly error page
 
-    if jss is None or len(jss["content"]) == 0:
-        return None  # Possibly error page
-
-    payload = demjson.decode(jss["content"])
-    return payload
+        payload = demjson.decode(jss["content"])
+        return payload

@@ -13,6 +13,7 @@ import PixivBrowserFactory
 import PixivConstant
 from PixivException import PixivException
 import PixivHelper
+import PixivConfig
 
 
 def download_image(caller,
@@ -29,7 +30,7 @@ def download_image(caller,
     # caller function/method
     # TODO: ideally to be removed or passed as argument
     db = caller.__dbManager__
-    config = caller.__config__
+    config: PixivConfig = caller.__config__
 
     if notifier is None:
         notifier = PixivHelper.dummy_notifier
@@ -66,7 +67,20 @@ def download_image(caller,
                         PixivHelper.print_and_log('info', f"\rLocal file exists: {filename}")
                         return (PixivConstant.PIXIVUTIL_SKIP_DUPLICATE, filename_save)
 
+                # Issue #807
+                if config.checkLastModified and os.path.isfile(filename_save) and image is not None:
+                    local_timestamp = os.path.getmtime(filename_save)
+                    remote_timestamp = time.mktime(image.worksDateDateTime.timetuple())
+                    if local_timestamp == remote_timestamp:
+                        PixivHelper.print_and_log('info', f"\rLocal file timestamp match with remote: {filename} => {image.worksDateDateTime}")
+                        return (PixivConstant.PIXIVUTIL_SKIP_DUPLICATE, filename_save)
+
                 remote_file_size = get_remote_filesize(url, referer, config, notifier)
+
+                # 837
+                if config.skipUnknownSize and os.path.isfile(filename_save) and remote_file_size == -1:
+                    PixivHelper.print_and_log('info', f"\rSkipped because file exists and cannot get remote file size for: {filename}")
+                    return (PixivConstant.PIXIVUTIL_SKIP_DUPLICATE, filename_save)
 
                 # 576
                 if remote_file_size > 0:
@@ -251,7 +265,7 @@ def perform_download(url, file_size, filename, overwrite, config, referer=None, 
     req = PixivHelper.create_custom_request(url, config, referer)
     br = PixivBrowserFactory.getBrowser(config=config)
     res = br.open_novisit(req)
-    if file_size < 0:
+    if file_size < 0:  # final check before download for download progress bar.
         try:
             content_length = res.info()['Content-Length']
             if content_length is not None:
@@ -298,53 +312,62 @@ def get_remote_filesize(url, referer, config, notifier=None):
     return file_size
 
 
-def handle_ugoira(image, filename, config, notifier):
+def handle_ugoira(image, zip_filename, config, notifier):
     if notifier is None:
         notifier = PixivHelper.dummy_notifier
 
-    if filename.endswith(".zip"):
-        ugo_name = filename[:-4] + ".ugoira"
+    if zip_filename.endswith(".zip"):
+        ugo_name = zip_filename[:-4] + ".ugoira"
     else:
-        ugo_name = filename
+        ugo_name = zip_filename
+
     if not os.path.exists(ugo_name):
-        PixivHelper.print_and_log('info', "Creating ugoira archive => " + ugo_name)
-        image.CreateUgoira(filename)
+        PixivHelper.print_and_log('info', f"Creating ugoira archive => {ugo_name}")
+        image.create_ugoira(zip_filename)
         # set last-modified and last-accessed timestamp
         if config.setLastModified and ugo_name is not None and os.path.isfile(ugo_name):
             ts = time.mktime(image.worksDateDateTime.timetuple())
             os.utime(ugo_name, (ts, ts))
 
-    if config.deleteZipFile and os.path.exists(filename):
-        PixivHelper.print_and_log('info', "Deleting zip file => " + filename)
-        os.remove(filename)
-
     if config.createGif:
         gif_filename = ugo_name[:-7] + ".gif"
         if not os.path.exists(gif_filename):
-            PixivHelper.ugoira2gif(ugo_name, gif_filename, config.deleteUgoira, image=image)
+            PixivHelper.ugoira2gif(ugo_name,
+                                   gif_filename,
+                                   image=image)
+
     if config.createApng:
-        gif_filename = ugo_name[:-7] + ".png"
-        if not os.path.exists(gif_filename):
-            PixivHelper.ugoira2apng(ugo_name, gif_filename, config.deleteUgoira, image=image)
+        apng_filename = ugo_name[:-7] + ".png"
+        if not os.path.exists(apng_filename):
+            PixivHelper.ugoira2apng(ugo_name,
+                                    apng_filename,
+                                    image=image)
+
     if config.createWebm:
-        gif_filename = ugo_name[:-7] + ".webm"
-        if not os.path.exists(gif_filename):
+        webm_filename = ugo_name[:-7] + "." + config.ffmpegExt
+        if not os.path.exists(webm_filename):
             PixivHelper.ugoira2webm(ugo_name,
-                                gif_filename,
-                                config.deleteUgoira,
-                                config.ffmpeg,
-                                config.ffmpegCodec,
-                                config.ffmpegParam,
-                                "webm",
-                                image)
+                                    webm_filename,
+                                    config.ffmpeg,
+                                    config.ffmpegCodec,
+                                    config.ffmpegParam,
+                                    config.ffmpegExt,
+                                    image)
     if config.createWebp:
-        gif_filename = ugo_name[:-7] + ".webp"
-        if not os.path.exists(gif_filename):
+        webp_filename = ugo_name[:-7] + ".webp"
+        if not os.path.exists(webp_filename):
             PixivHelper.ugoira2webm(ugo_name,
-                                gif_filename,
-                                config.deleteUgoira,
-                                config.ffmpeg,
-                                config.webpCodec,
-                                config.webpParam,
-                                "webp",
-                                image)
+                                    webp_filename,
+                                    config.ffmpeg,
+                                    config.webpCodec,
+                                    config.webpParam,
+                                    "webp",
+                                    image)
+
+    if config.deleteZipFile and os.path.exists(zip_filename) and zip_filename.endswith(".zip"):
+        PixivHelper.print_and_log('info', f"Deleting zip file => {zip_filename}")
+        os.remove(zip_filename)
+
+    if config.deleteUgoira and os.path.exists(ugo_name) and ugo_name.endswith(".ugoira"):
+        PixivHelper.print_and_log('info', f"Deleting ugoira file => {ugo_name}")
+        os.remove(ugo_name)
