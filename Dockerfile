@@ -2,7 +2,9 @@ FROM python:3.8
 
 RUN apt-get update && apt-get install -y \
     git \
-    tmux
+    tmux \
+    ffmpeg
+RUN pip install -U pip
 
 WORKDIR /tmp
 RUN git clone https://github.com/Nandaka/PixivUtil2.git
